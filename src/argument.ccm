@@ -1,0 +1,141 @@
+module;
+#include <algorithm>
+#include <iterator>
+#include <array>
+#include <optional>
+#include <ranges>
+#include <string_view>
+#include <vector>
+export module moderna.process:argument;
+
+/*
+  argument.
+  This defines the types of arguments that the user of the API can defined. An argument
+  can be dynamic or static. Dynamic arguments will heap allocate while static argument will
+  stack allocate.
+*/
+
+namespace moderna::process {
+  export template <typename arg_t>
+  concept argument_t = requires(arg_t args) {
+    { args.command() } -> std::same_as<const char *>;
+    { args.arguments() } -> std::same_as<const char *const *>;
+  };
+
+  /*
+    Creates an argument with fixed size (which is probably most of the cases).
+  */
+  export template <typename... Args> struct static_argument {
+    /*
+      Use process::arg::make_static instead.
+    */
+    constexpr static_argument(const Args &...args) {
+      _set_arguments(args...);
+    }
+    constexpr const char *command() const noexcept {
+      return _arguments.at(0).data();
+    }
+    constexpr const char *const *arguments() const noexcept {
+      return _parsed_args.data();
+    }
+    constexpr static size_t size() noexcept {
+      return sizeof...(Args);
+    }
+
+    /*
+      Check that the size of the argument is one
+    */
+    static_assert(size() >= 0, "Minimum size of an argument is 1");
+
+  private:
+    std::array<std::string_view, size()> _arguments;
+    std::array<const char *, size() + 1> _parsed_args;
+
+    /*
+      consteval function to initialize both of the arrays. This have zero runtime cost. Everything
+      is stack allocated.
+    */
+    template <typename C, typename... Arg>
+      requires(std::is_convertible_v<C, std::string_view>)
+    constexpr void _set_arguments(const C& cur, Arg &&...args) noexcept {
+      constexpr size_t idx = size() - sizeof...(Arg) - 1;
+      _arguments[idx] = cur;
+      _parsed_args[idx] = _arguments[idx].data();
+      /*
+        End condition for recursive function
+      */
+      if constexpr (sizeof...(Arg) != 0) _set_arguments(std::forward<Arg>(args)...);
+      else
+        _parsed_args[idx + 1] = nullptr;
+    }
+  };
+
+  static_assert(argument_t<decltype(static_argument{"lol", "lol"})>);
+
+  /*
+    Creates argument with not fixed size. The constructor accepts a vector that will own the vector.
+  */
+  export struct dyna_argument {
+    /*
+      Example usage:
+      std::vector<std::string_view> args;
+      if (is_string) args.push_back("--str");
+      else if(is_number) args.push_back("--num");
+      // Invalidate args and let DynamicArgument own.
+      auto arg_pack = DynamicArgument(std::move(args));
+    */
+    template <typename... Args> dyna_argument(Args &&...args) {
+      static_assert(sizeof...(Args) != 0);
+      _initialize_arguments(std::forward<Args>(args)...);
+    }
+    const char *command() const noexcept {
+      return _arguments.at(0).data();
+    }
+    const char *const *arguments() const noexcept {
+      if (!_parsed_arguments.has_value()) _cache_parsed_arguments();
+      return _parsed_arguments.value().data();
+    }
+    void add_argument(std::string_view v) {
+      _arguments.emplace_back(v);
+      if (_parsed_arguments.has_value()) _parsed_arguments->clear();
+    }
+    size_t size() const {
+      return _arguments.size();
+    }
+
+  private:
+    std::vector<std::string_view> _arguments;
+    mutable std::optional<std::vector<const char *>> _parsed_arguments;
+
+    template <typename Cur, typename... Args>
+      requires(std::is_convertible_v<Cur, std::string_view>)
+    void _initialize_arguments(const Cur &cur, Args &&...args) {
+      std::string_view v = cur;
+      _arguments.emplace_back(std::move(v));
+      if constexpr (sizeof...(Args) != 0) _initialize_arguments(std::forward<Args>(args)...);
+    }
+    template <std::ranges::range Cur, typename... Args>
+      requires(std::is_convertible_v<std::ranges::range_value_t<Cur>, std::string_view>)
+    void _initialize_arguments(const Cur &cur, Args &&...args) {
+      for (auto it = std::ranges::begin(cur); it != std::ranges::end(cur);
+           it = std::ranges::next(it)) {
+        std::string_view v = *it;
+        _arguments.emplace_back(std::move(v));
+      }
+      if constexpr (sizeof...(Args) != 0) _initialize_arguments(std::forward<Args>(args)...);
+    }
+
+    void _cache_parsed_arguments() const noexcept {
+      std::vector<const char *> parsed_arguments;
+      parsed_arguments.reserve(_arguments.size() + 1);
+      std::ranges::copy(
+        std::ranges::subrange(_arguments.begin(), _arguments.end()) |
+          std::ranges::views::transform([](const std::string_view &v) { return v.data(); }),
+        std::back_inserter(parsed_arguments)
+      );
+      parsed_arguments[_arguments.size()] = nullptr;
+      _parsed_arguments.emplace(std::move(parsed_arguments));
+    }
+  };
+  static_assert(argument_t<dyna_argument>);
+}

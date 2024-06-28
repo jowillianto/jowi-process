@@ -1,0 +1,48 @@
+module;
+#include <sys/wait.h>
+#include <cassert>
+export module moderna.process:result;
+import :argument;
+
+namespace moderna {
+  export struct process_result {
+    /*
+      Returns the status obtained from the subprocess. This is a status set directly by the OS
+      specific API.
+    */
+    int status() const {
+      return _status;
+    }
+    bool is_exit_normal() const {
+      return WIFEXITED(_status);
+    }
+    bool is_terminated() const {
+      return WIFSIGNALED(_status);
+    }
+    bool is_stopped() const {
+      return WIFSTOPPED(_status);
+    }
+    /*
+      Returns the exit code of the subprocess. If the process exits normally returns the exit status
+      otherwise will return the signal terminating the process.
+    */
+    int exit_code() const {
+      if (WIFEXITED(_status)) return WEXITSTATUS(_status);
+      else if (WIFSIGNALED(_status))
+        return WTERMSIG(_status);
+      else if (WIFSTOPPED(_status))
+        return WSTOPSIG(_status);
+      /*
+        This part of the code should never be reached.
+      */
+      assert(false);
+    }
+
+  private:
+    int _status;
+
+    process_result(int status) : _status{status} {}
+
+    template <process::argument_t arg_t> friend struct subprocess;
+  };
+}

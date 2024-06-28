@@ -1,0 +1,233 @@
+module;
+#include <sys/signal.h>
+#include <sys/wait.h>
+#include <csignal>
+#include <exception>
+#include <expected>
+#include <optional>
+#include <spawn.h>
+#include <string_view>
+#include <system_error>
+export module moderna.process;
+export import :argument;
+export import :result;
+export import :env;
+
+namespace moderna {
+
+  export enum class process_error_code { PROCESS_WAIT_ERROR, PROCESS_IS_DEAD, EXEC_ERROR };
+  export template <process_error_code error_code> struct process_error : public std::exception {
+    process_error(std::string_view message) : _message{message} {}
+    process_error() : _message{std::nullopt} {}
+    const char *what() const noexcept {
+      if (_message.has_value()) return _message.value().c_str();
+      switch (code()) {
+        case process_error_code::PROCESS_WAIT_ERROR:
+          return "process cannot be waited as it is either waiting or dead";
+        case process_error_code::PROCESS_IS_DEAD:
+          return "process has died";
+        case process_error_code::EXEC_ERROR:
+          return "process fail to execute";
+      };
+    }
+    process_error_code code() const noexcept {
+      return error_code;
+    }
+    std::optional<std::string> _message;
+  };
+  /*
+    A RAII based subprocess running that will release resources on exit, this will be done by
+    either waiting on the process or killing the process. Not a threadsafe class, do not call
+    modifying functions from two threads.
+  */
+  export template <process::argument_t arg_t> struct subprocess {
+    /*
+      Create and run a process
+    */
+    template <typename... Args>
+    subprocess(
+      const arg_t &args,
+      int stdout = 0,
+      int stdin = 1,
+      int stderr = 2,
+      const process::env &env = process::env::from_global()
+    ) :
+      subprocess(
+        args,
+        _initialize_pre_spawn_file_action(stdout, stdin, stderr),
+        _initialize_pre_spawn_attributes(),
+        env
+      ) {}
+    /*
+      Create and run a process with spawn attributes given previously.
+    */
+    template <typename... Args>
+    subprocess(
+      const arg_t &args,
+      const posix_spawn_file_actions_t &spawn_action,
+      const posix_spawnattr_t &spawn_attributes,
+      const process::env &env = process::env::from_global()
+    ) {
+      // Spawn process.
+      _spawn_subprocess(args, spawn_action, spawn_attributes, env);
+      _run();
+    }
+
+    /*
+      If the process is not running.
+      throws :
+        thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
+        std::system_error
+    */
+    void send_signal(int sig_num) const {
+      if (!_is_running) throw process_error<process_error_code::PROCESS_IS_DEAD>{};
+      if (::kill(_pid, sig_num) == -1) throw std::system_error{errno, std::generic_category()};
+    }
+    /*
+      wait for the child in a non blocking manner. This call will modify the process object.
+      If the process has been waited for before, this will return empty.
+    */
+    std::optional<std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>>>
+    wait_non_blocking() noexcept {
+      if (!_is_running) return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+      int status = 0;
+      int wait_status = waitpid(_pid, &status, WNOHANG);
+      // Fail called
+      if (wait_status == -1)
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)}};
+      // process has not changed state
+      else if (wait_status == 0)
+        return std::nullopt;
+      // process has changed state
+      _stop();
+      return process_result{status};
+    }
+    /*
+      waits for the child to finish execution and finish
+    */
+    std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>> wait() {
+      if (!_is_running) return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+      int status = 0;
+      int wait_status = waitpid(_pid, &status, 0);
+      if (wait_status == -1)
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)}};
+      else {
+        _stop();
+        return process_result{status};
+      }
+    }
+    /*
+      Kill a process. The outcome of this function is the same as calling
+      send_signal (9).
+      throws :
+      std::system_error
+      thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
+    */
+    void kill() {
+      /*
+        Sends a sigkill signal. send_signal will handle SIGKILL
+      */
+      send_signal(SIGKILL);
+    }
+
+    /*
+      Returns if the current process is waitable. Takes an additional argument that specifies the
+      memory order for checking.
+    */
+    bool waitable() const {
+      return _is_running;
+    }
+
+    ~subprocess() {
+      /*
+        We have to kill over here because calling wait() can cause a process to wait indefinitely
+        without killing if the child runs indefinitely. In order to prevent such a case from
+        happening. A RAII class has to kill the child.
+      */
+      if (waitable()) {
+        kill();
+        auto _ = wait();
+      }
+    }
+
+    /*
+      Returns the pid for the process.
+    */
+    const pid_t &pid() const {
+      return _pid;
+    }
+
+    /*
+      Disallow copying (this breaks the system), the pid should only be owned by one object.
+    */
+    subprocess &operator=(const subprocess &o) = delete;
+    subprocess &operator=(subprocess &&o) {
+      this->_pid = o._pid;
+      this->_is_running = o._is_running;
+      o._pid = -1;
+      o._is_running = false;
+      return *this;
+    }
+
+  private:
+    pid_t _pid;
+    bool _is_running;
+    /*
+      Function to control the boolean _is_running
+    */
+    void _run() noexcept {
+      _is_running = true;
+    }
+    void _stop() noexcept {
+      _is_running = false;
+    }
+    /*
+      Initializes _spawn_action based on the input stdout, stdin, stderr
+    */
+    posix_spawn_file_actions_t _initialize_pre_spawn_file_action(
+      int stdout, int stdin, int stderr
+    ) {
+      posix_spawn_file_actions_t spawn_action;
+      if (posix_spawn_file_actions_init(&spawn_action) == -1) {
+        throw std::system_error{errno, std::generic_category()};
+      }
+      if (posix_spawn_file_actions_adddup2(&spawn_action, stdout, 1) == -1) {
+        throw std::system_error{errno, std::generic_category()};
+      }
+      if (posix_spawn_file_actions_adddup2(&spawn_action, stdin, 0) == -1) {
+        throw std::system_error{errno, std::generic_category()};
+      }
+      if (posix_spawn_file_actions_adddup2(&spawn_action, stderr, 2) == -1) {
+        throw std::system_error{errno, std::generic_category()};
+      }
+      return spawn_action;
+    }
+    /*
+      Initializes spawn attributes
+    */
+    posix_spawnattr_t _initialize_pre_spawn_attributes() {
+      posix_spawnattr_t attributes;
+      posix_spawnattr_init(&attributes);
+      return attributes;
+    }
+
+    void _spawn_subprocess(
+      const arg_t &arguments,
+      const posix_spawn_file_actions_t &actions,
+      const posix_spawnattr_t &attributes,
+      const process::env &env
+    ) {
+      if (posix_spawn(
+        &_pid, 
+        arguments.command(), 
+        &actions, 
+        &attributes, 
+        const_cast<char* const*>(arguments.arguments()), 
+        const_cast<char* const*>(env.to_c_style_arr())
+      ) == -1)  {
+        throw process_error<process_error_code::EXEC_ERROR>{strerror(errno)};
+      }
+    }
+  };
+  
+}
