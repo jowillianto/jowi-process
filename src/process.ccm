@@ -40,11 +40,11 @@ namespace moderna {
     either waiting on the process or killing the process. Not a threadsafe class, do not call
     modifying functions from two threads.
   */
-  export template <process::argument_t arg_t> struct subprocess {
+  export struct subprocess {
     /*
       Create and run a process
     */
-    template <typename... Args>
+    template <process::argument_t arg_t>
     subprocess(
       const arg_t &args,
       int stdout = 0,
@@ -61,7 +61,7 @@ namespace moderna {
     /*
       Create and run a process with spawn attributes given previously.
     */
-    template <typename... Args>
+    template <process::argument_t arg_t>
     subprocess(
       const arg_t &args,
       const posix_spawn_file_actions_t &spawn_action,
@@ -211,6 +211,7 @@ namespace moderna {
       return attributes;
     }
 
+    template <process::argument_t arg_t>
     void _spawn_subprocess(
       const arg_t &arguments,
       const posix_spawn_file_actions_t &actions,

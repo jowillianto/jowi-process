@@ -43,6 +43,6 @@ namespace moderna {
 
     process_result(int status) : _status{status} {}
 
-    template <process::argument_t arg_t> friend struct subprocess;
+    friend struct subprocess;
   };
 }
