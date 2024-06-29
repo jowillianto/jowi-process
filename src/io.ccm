@@ -1,0 +1,198 @@
+module;
+#include <sys/mman.h>
+#include <algorithm>
+#include <array>
+#include <concepts>
+#include <expected>
+#include <fcntl.h>
+#include <ranges>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <unistd.h>
+#include <vector>
+export module moderna.io;
+namespace moderna::io {
+  /*
+    Generic File Interface, if this points to a real file, it will be seekable.
+  */
+  template <typename file_t>
+  concept generic_file_t = requires(file_t file, const file_t const_file) {
+    { const_file.fd() } -> std::same_as<int>;
+    { file.close() } -> std::same_as<void>;
+    { const_file.file_ptr() } -> std::same_as<FILE *>;
+    noexcept(const_file);
+  };
+  /*
+    Readable File Interface
+  */
+  template <typename file_t>
+  concept readable_file_t = requires(file_t file) {
+    { file.read() } -> std::same_as<std::expected<std::string, std::system_error>>;
+    { file.readline() } -> std::same_as<std::expected<std::string, std::system_error>>;
+    {
+      file.readlines()
+    } -> std::same_as<std::expected<std::vector<std::string>, std::system_error>>;
+    { file.is_eof() } -> std::same_as<bool>;
+  };
+  /*
+    Writable file interface.
+  */
+  template <typename file_t>
+  concept writable_file_t = requires(file_t file) {
+    { file.write(std::declval<std::string_view>()) };
+    { file.writeline(std::declval<std::string_view>()) };
+  };
+
+  auto stream_closer = [](FILE *f) { fclose(f); };
+  using unique_file_ptr = std::unique_ptr<FILE, decltype(stream_closer)>;
+
+  /*
+    Function to shorten open.
+  */
+  std::expected<unique_file_ptr, std::system_error> open_to_ptr(
+    std::string_view file_path, std::string_view mode
+  ) noexcept {
+    auto file_ptr = fopen(file_path.data(), mode.data());
+    if (file_ptr == nullptr)
+      return std::unexpected{std::system_error{errno, std::system_category()}};
+    else
+      return unique_file_ptr{file_ptr};
+  }
+  std::expected<unique_file_ptr, std::system_error> open_to_ptr(
+    int fd, std::string_view mode
+  ) noexcept {
+    auto file_ptr = fdopen(fd, mode.data());
+    if (file_ptr == nullptr)
+      return std::unexpected{std::system_error{errno, std::system_category()}};
+    else
+      return unique_file_ptr{file_ptr};
+  }
+
+  /*
+    A simple structure representing a readable file.
+  */
+  export struct readable_file {
+    template <size_t buffer_size = 4096> std::expected<std::string, std::system_error> read() {
+      std::array<char, buffer_size + 1> buf;
+      std::string full_buf;
+      while (feof(__file.get()) == 0 || ferror(__file.get()) != 0) {
+        size_t read_count = fread(buf.data(), sizeof(char), buffer_size, __file.get());
+        buf[read_count] = 0;
+        full_buf.append(buf.data());
+      }
+      if (feof(__file.get()) != 0) return full_buf;
+      else
+        return std::unexpected{std::system_error{ferror(__file.get()), std::system_category()}};
+    }
+    template <size_t buffer_size = 4096>
+    std::expected<std::vector<std::string>, std::system_error> readlines() {
+      /*
+        Read first.
+      */
+      return read<buffer_size>().transform([](std::string buf) {
+        std::vector<std::string> newline_split;
+        std::ranges::transform(
+          std::ranges::split_view{buf, '\n'},
+          std::back_inserter(newline_split),
+          [](auto subrange) { return std::string{subrange.begin(), subrange.end()}; }
+        );
+        return newline_split;
+      });
+    }
+    std::expected<std::string, std::system_error> readline() {
+      char buf = 0;
+      std::string str_buf;
+      while (!feof(__file.get()) && buf != '\n') {
+        size_t read_amount = fread(&buf, sizeof(char), 1, __file.get());
+        str_buf += buf;
+      }
+      if (buf == '\n') return str_buf;
+      else if (feof(__file.get()) != 0)
+        return str_buf;
+      else
+        return std::unexpected{std::system_error{ferror(__file.get()), std::system_category()}};
+    }
+    void close() {
+      __file.reset();
+    }
+    FILE *file_ptr() const {
+      return __file.get();
+    }
+    int fd() const {
+      return fileno(__file.get());
+    }
+
+    static std::expected<readable_file, std::system_error> open(std::string_view file_path
+    ) noexcept {
+      return open_to_ptr(file_path, "r").transform([](auto file_ptr) {
+        return readable_file{std::move(file_ptr)};
+      });
+    }
+    static std::expected<readable_file, std::system_error> open(int fd) noexcept {
+      return open_to_ptr(fd, "r").transform([](auto file_ptr) {
+        return readable_file{std::move(file_ptr)};
+      });
+    }
+
+  private:
+    unique_file_ptr __file;
+    readable_file(unique_file_ptr file) noexcept : __file{std::move(file)} {}
+  };
+  /*
+    A simple structure representing a writable file.
+  */
+  export struct writable_file {
+    void write(std::string_view v) {
+      size_t write_count = fwrite(v.data(), sizeof(char), v.length(), __file.get());
+      if (write_count != v.length()) {
+        throw std::system_error{ferror(__file.get()), std::system_category()};
+      }
+    }
+    void writeline(std::string_view v) {
+      write(v);
+      write("\n");
+    }
+    FILE *file_ptr() const {
+      return __file.get();
+    }
+    int fd() const {
+      return fileno(__file.get());
+    }
+    void close() {
+      __file.reset();
+    }
+
+    static std::expected<writable_file, std::system_error> open(std::string_view file_path
+    ) noexcept {
+      return open_to_ptr(file_path, "w").transform([](auto file_ptr) {
+        return writable_file{std::move(file_ptr)};
+      });
+    }
+    static std::expected<writable_file, std::system_error> open(int fd) noexcept {
+      return open_to_ptr(fd, "w").transform([](auto file_ptr) {
+        return writable_file{std::move(file_ptr)};
+      });
+    }
+
+  private:
+    unique_file_ptr __file;
+    writable_file(unique_file_ptr file) noexcept : __file{std::move(file)} {}
+  };
+
+  export struct pipe {
+    readable_file r;
+    writable_file w;
+
+    static std::expected<pipe, std::system_error> open() noexcept {
+      int pipefd[2];
+      if (::pipe(pipefd) == -1)
+        return std::unexpected{std::system_error{errno, std::system_category()}};
+      return readable_file::open(pipefd[0]).and_then([&](auto r) {
+        return writable_file::open(pipefd[1]).transform([&](auto w) mutable {
+          return pipe{std::move(r), std::move(w)};
+        });
+      });
+    }
+  };
+}

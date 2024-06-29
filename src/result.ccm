@@ -30,12 +30,9 @@ namespace moderna {
       if (WIFEXITED(_status)) return WEXITSTATUS(_status);
       else if (WIFSIGNALED(_status))
         return WTERMSIG(_status);
-      else if (WIFSTOPPED(_status))
+      // WIFSTOPPED here
+      else
         return WSTOPSIG(_status);
-      /*
-        This part of the code should never be reached.
-      */
-      assert(false);
     }
 
   private:

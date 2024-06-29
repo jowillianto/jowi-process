@@ -1,10 +1,11 @@
 module;
+#include <sys/mman.h>
 #include <sys/signal.h>
 #include <sys/wait.h>
-#include <csignal>
 #include <exception>
 #include <expected>
 #include <optional>
+#include <signal.h>
 #include <spawn.h>
 #include <string_view>
 #include <system_error>
@@ -72,6 +73,12 @@ namespace moderna {
       _spawn_subprocess(args, spawn_action, spawn_attributes, env);
       _run();
     }
+    subprocess(subprocess &&o) {
+      this->_pid = o._pid;
+      this->_is_running = o._is_running;
+      o._pid = -1;
+      o._is_running = false;
+    }
 
     /*
       If the process is not running.
@@ -87,14 +94,17 @@ namespace moderna {
       wait for the child in a non blocking manner. This call will modify the process object.
       If the process has been waited for before, this will return empty.
     */
-    std::optional<std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>>>
+    std::optional<
+      std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>>>
     wait_non_blocking() noexcept {
-      if (!_is_running) return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+      if (!_is_running)
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
       int status = 0;
       int wait_status = waitpid(_pid, &status, WNOHANG);
       // Fail called
       if (wait_status == -1)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)}};
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)
+        }};
       // process has not changed state
       else if (wait_status == 0)
         return std::nullopt;
@@ -106,11 +116,12 @@ namespace moderna {
       waits for the child to finish execution and finish
     */
     std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>> wait() {
-      if (!_is_running) return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+      if (!_is_running)
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
       int status = 0;
-      int wait_status = waitpid(_pid, &status, 0);
-      if (wait_status == -1)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)}};
+      if (waitpid(_pid, &status, 0) == -1)
+        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)
+        }};
       else {
         _stop();
         return process_result{status};
@@ -218,17 +229,15 @@ namespace moderna {
       const posix_spawnattr_t &attributes,
       const process::env &env
     ) {
-      if (posix_spawn(
-        &_pid, 
-        arguments.command(), 
-        &actions, 
-        &attributes, 
-        const_cast<char* const*>(arguments.arguments()), 
-        const_cast<char* const*>(env.to_c_style_arr())
-      ) == -1)  {
-        throw process_error<process_error_code::EXEC_ERROR>{strerror(errno)};
-      }
+      auto return_code = posix_spawnp(
+        &_pid,
+        arguments.command(),
+        &actions,
+        &attributes,
+        const_cast<char *const *>(arguments.arguments()),
+        const_cast<char *const *>(env.to_c_style_arr())
+      );
+      if (return_code != 0) throw process_error<process_error_code::EXEC_ERROR>{strerror(errno)};
     }
   };
-  
-}
+};

@@ -19,12 +19,22 @@ if (
 )
   include(CTest)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../test-lib test-lib)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../file-lock file-lock)
   add_executable(test_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
   moderna_add_test(
     moderna_process_tests
     ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
     LIBRARIES moderna_test_lib moderna_process
     COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/test_child"
+    SANITIZERS all
+  )
+  moderna_add_test(
+    moderna_io_tests
+    ${CMAKE_CURRENT_LIST_DIR}/tests/io_tests.cpp
+    LIBRARIES moderna_test_lib moderna_process moderna_file_lock
+    COMPILE_DEFINITIONS 
+      READ_FILE="${CMAKE_CURRENT_LIST_DIR}/assets/read.txt" 
+      WRITE_FILE="${CMAKE_CURRENT_LIST_DIR}/assets/write.txt"
     SANITIZERS all
   )
 endif()
