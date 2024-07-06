@@ -4,17 +4,18 @@ set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
 
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/variant_error)
-
-add_library(${PROJECT_NAME})
-file (
-  GLOB ${PROJECT_NAME}_src
-  "${CMAKE_CURRENT_LIST_DIR}/src/*.ccm"
-)
-target_sources(${PROJECT_NAME}
-  PUBLIC 
-    FILE_SET CXX_MODULES FILES ${${PROJECT_NAME}_src}
-)
+if (NOT ${PROJECT_NAME})
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/variant_error)
+  add_library(${PROJECT_NAME})
+  file (
+    GLOB ${PROJECT_NAME}_src
+    "${CMAKE_CURRENT_LIST_DIR}/src/*.ccm"
+  )
+  target_sources(${PROJECT_NAME}
+    PUBLIC 
+      FILE_SET CXX_MODULES FILES ${${PROJECT_NAME}_src}
+  )
+endif()
 
 if (
   EXISTS ${CMAKE_CURRENT_LIST_DIR}/../test-lib
