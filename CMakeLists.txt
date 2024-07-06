@@ -37,4 +37,12 @@ if (
       WRITE_FILE="${CMAKE_CURRENT_LIST_DIR}/assets/write.txt"
     SANITIZERS all
   )
+  moderna_add_test(
+    moderna_io_sock_test
+    ${CMAKE_CURRENT_LIST_DIR}/tests/sock_test.cpp
+    LIBRARIES moderna_test_lib moderna_process moderna_file_lock
+    COMPILE_DEFINITIONS
+      INDEX_HTML="${CMAKE_CURRENT_LIST_DIR}/assets/index.html"
+    SANITIZERS all
+  )
 endif()

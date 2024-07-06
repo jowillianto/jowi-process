@@ -1,13 +1,11 @@
 module;
 #include <algorithm>
-#include <iterator>
+#include <concepts>
 #include <array>
-#include <optional>
 #include <ranges>
 #include <string_view>
 #include <vector>
 export module moderna.process:argument;
-
 /*
   argument.
   This defines the types of arguments that the user of the API can defined. An argument
@@ -92,12 +90,13 @@ namespace moderna::process {
       return _arguments.at(0).data();
     }
     const char *const *arguments() const noexcept {
-      if (!_parsed_arguments.has_value()) _cache_parsed_arguments();
-      return _parsed_arguments.value().data();
+      if (_parsed_arguments.size() == 0) _cache_parsed_arguments();
+      return _parsed_arguments.data();
     }
     void add_argument(std::string_view v) {
       _arguments.emplace_back(v);
-      if (_parsed_arguments.has_value()) _parsed_arguments->clear();
+      if (_parsed_arguments.size() != 0) 
+        _parsed_arguments.clear();
     }
     size_t size() const {
       return _arguments.size();
@@ -105,7 +104,7 @@ namespace moderna::process {
 
   private:
     std::vector<std::string_view> _arguments;
-    mutable std::optional<std::vector<const char *>> _parsed_arguments;
+    mutable std::vector<const char *> _parsed_arguments;
 
     template <typename Cur, typename... Args>
       requires(std::is_convertible_v<Cur, std::string_view>)
@@ -126,15 +125,13 @@ namespace moderna::process {
     }
 
     void _cache_parsed_arguments() const noexcept {
-      std::vector<const char *> parsed_arguments;
-      parsed_arguments.reserve(_arguments.size() + 1);
+      _parsed_arguments.reserve(_arguments.size() + 1);
       std::ranges::copy(
         std::ranges::subrange(_arguments.begin(), _arguments.end()) |
           std::ranges::views::transform([](const std::string_view &v) { return v.data(); }),
-        std::back_inserter(parsed_arguments)
+        std::back_inserter(_parsed_arguments)
       );
-      parsed_arguments[_arguments.size()] = nullptr;
-      _parsed_arguments.emplace(std::move(parsed_arguments));
+      _parsed_arguments[_arguments.size()] = nullptr;
     }
   };
   static_assert(argument_t<dyna_argument>);

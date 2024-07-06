@@ -1,80 +1,61 @@
 import moderna.test_lib;
 import moderna.process;
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <cassert>
+import moderna.io;
+#include <string>
+#include <system_error>
+#include <variant>
 
 using namespace moderna;
-
-struct RandomFile {
-  RandomFile(size_t name_length) :
-    _fpath{std::filesystem::absolute(std::filesystem::path{test_lib::random_string(name_length)})} {
-  }
-  const std::filesystem::path &fpath() const {
-    return _fpath;
-  }
-  ~RandomFile() {
-    if (std::filesystem::exists(_fpath)) std::filesystem::remove_all(_fpath);
-  }
-  RandomFile &operator=(const RandomFile &file) = delete;
-  RandomFile &operator=(const RandomFile &&file) = delete;
-
-private:
-  std::filesystem::path _fpath;
-};
 
 auto process_tests =
   test_lib::make_tester("Process Test")
     .add_test(
       "execute_test_normal_exit",
       []() {
-        auto null_pipe = fopen("/dev/null", "w+");
-        auto fd = fileno(null_pipe);
+        auto null_writer = moderna::io::writable_file::open("/dev/null").value();
+        auto null_reader = moderna::io::readable_file::open("/dev/null").value();
         auto completed_process =
-          subprocess{process::static_argument{TEST_CHILD_EXEC, "arg1"}, fd, fd, fd}.wait();
+          subprocess{
+            process::static_argument{TEST_CHILD_EXEC, "arg1"},
+            null_writer.fd(),
+            null_reader.fd(),
+            null_writer.fd()
+          }
+            .wait();
         test_lib::assert_equal(completed_process.has_value(), true);
         auto result = completed_process.value();
         test_lib::assert_equal(result.exit_code(), 0);
-        fclose(null_pipe);
       }
     )
     .add_test(
       "execute_test_abnormal_exit",
       []() {
-        auto null_pipe = fopen("/dev/null", "w+");
-        auto fd = fileno(null_pipe);
+        auto null_writer = moderna::io::writable_file::open("/dev/null").value();
+        auto null_reader = moderna::io::readable_file::open("/dev/null").value();
         auto completed_process =
-          moderna::subprocess{
-            process::static_argument{
-              TEST_CHILD_EXEC,
-            },
-            fd,
-            fd,
-            fd
+          subprocess{
+            process::static_argument{TEST_CHILD_EXEC},
+            null_writer.fd(),
+            null_reader.fd(),
+            null_writer.fd()
           }
             .wait();
         test_lib::assert_equal(completed_process.has_value(), true);
         auto result = completed_process.value();
         test_lib::assert_equal(result.exit_code(), 1);
-        fclose(null_pipe);
       }
     )
     .add_test(
       "execute_pipe",
       []() {
-        auto random_str = test_lib::random_string(10);
-        auto random_file = RandomFile{20};
-        auto out_file = fopen(random_file.fpath().c_str(), "w");
+        auto random_str = moderna::test_lib::random_string(20);
+        auto pipe = moderna::io::pipe::open().value();
         auto completed_process =
-          moderna::subprocess{process::static_argument{TEST_CHILD_EXEC, random_str}, fileno(out_file)}
+          moderna::subprocess{process::static_argument{TEST_CHILD_EXEC, random_str}, pipe.w.fd()}
             .wait();
-        fclose(out_file);
-        auto in_file = std::fstream{random_file.fpath().c_str(), std::ios_base::in};
-        std::string buffer;
-        in_file >> buffer;
+        pipe.w.close();
         test_lib::assert_equal(completed_process.value().exit_code(), 0);
-        test_lib::assert_equal(buffer, random_str);
+        test_lib::assert_equal(pipe.r.read().value(), random_str + "\n");
       }
     )
     .add_test(
@@ -83,9 +64,11 @@ auto process_tests =
         auto delay_time = std::to_string(test_lib::random_integer(1000, 5000));
         auto process =
           moderna::subprocess{process::static_argument{TEST_CHILD_EXEC, "delay", delay_time}};
-        process.kill();
+        test_lib::assert_equal(process.kill().has_value(), true);
         auto completed_process = process.wait();
-        test_lib::assert_equal(completed_process.value().exit_code() != 0, true);
+        test_lib::assert_equal(
+          std::get<moderna::process_result_error>(completed_process.error().error).result.exit_code() != 0, true
+        );
       }
     )
     .add_test(
@@ -93,9 +76,10 @@ auto process_tests =
       []() {
         auto null_pipe = fopen("/dev/null", "w+");
         auto fd = fileno(null_pipe);
-        auto process =
-          moderna::subprocess{process::static_argument{TEST_CHILD_EXEC, "delay", "1000"}, fd, fd, fd};
-        test_lib::assert_equal(process.wait_non_blocking().has_value(), false);
+        auto process = moderna::subprocess{
+          process::static_argument{TEST_CHILD_EXEC, "delay", "1000"}, fd, fd, fd
+        };
+        test_lib::assert_equal(process.wait_non_blocking().value().has_value(), false);
         auto completed_process = process.wait();
         test_lib::assert_equal(completed_process.has_value(), true);
         auto result = completed_process.value();
@@ -126,7 +110,7 @@ auto process_tests =
       fclose(null_pipe);
     });
 
-int main(int argc, const char **argv, const char** env) {
+int main(int argc, const char **argv, const char **env) {
   process::env::init_global(env);
   process_tests.print_or_exit();
 }

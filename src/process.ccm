@@ -2,46 +2,50 @@ module;
 #include <sys/mman.h>
 #include <sys/signal.h>
 #include <sys/wait.h>
-#include <exception>
+#include <cassert>
+#include <concepts>
+#include <csignal>
 #include <expected>
 #include <optional>
-#include <signal.h>
 #include <spawn.h>
-#include <string_view>
 #include <system_error>
+#include <unistd.h>
 export module moderna.process;
+import moderna.variant_error;
 export import :argument;
-export import :result;
 export import :env;
-
+export import :result;
 namespace moderna {
+  template <typename F, typename... Args>
+    requires(std::invocable<F, Args...>)
+  std::expected<void, std::system_error> invoke_sys_call_returning_err_code(
+    F &&sys_call, Args &&...args
+  ) {
+    int err_no = std::invoke(std::forward<F>(sys_call), std::forward<Args>(args)...);
+    if (err_no != 0) return std::unexpected{std::system_error{err_no, std::generic_category()}};
+    return {};
+  }
+  template <typename F, typename... Args>
+  std::expected<void, std::system_error> invoke_sys_call(F &&sys_call, Args &&...args) {
+    if (std::invoke(std::forward<F>(sys_call), std::forward<Args>(args)...) == -1)
+      return std::unexpected{std::system_error{errno, std::generic_category()}};
+    return {};
+  }
 
-  export enum class process_error_code { PROCESS_WAIT_ERROR, PROCESS_IS_DEAD, EXEC_ERROR };
-  export template <process_error_code error_code> struct process_error : public std::exception {
-    process_error(std::string_view message) : _message{message} {}
-    process_error() : _message{std::nullopt} {}
-    const char *what() const noexcept {
-      if (_message.has_value()) return _message.value().c_str();
-      switch (code()) {
-        case process_error_code::PROCESS_WAIT_ERROR:
-          return "process cannot be waited as it is either waiting or dead";
-        case process_error_code::PROCESS_IS_DEAD:
-          return "process has died";
-        case process_error_code::EXEC_ERROR:
-          return "process fail to execute";
-      };
+  export struct process_result_error {
+    process_result result;
+    std::string_view what() const noexcept {
+      return "status return code is not 0";
     }
-    process_error_code code() const noexcept {
-      return error_code;
-    }
-    std::optional<std::string> _message;
   };
+
   /*
     A RAII based subprocess running that will release resources on exit, this will be done by
     either waiting on the process or killing the process. Not a threadsafe class, do not call
     modifying functions from two threads.
   */
   export struct subprocess {
+    using wait_unexpect_t = moderna::variant_error<std::system_error, process_result_error>;
     /*
       Create and run a process
     */
@@ -53,79 +57,53 @@ namespace moderna {
       int stderr = 2,
       const process::env &env = process::env::from_global()
     ) :
-      subprocess(
-        args,
-        _initialize_pre_spawn_file_action(stdout, stdin, stderr),
-        _initialize_pre_spawn_attributes(),
-        env
-      ) {}
-    /*
-      Create and run a process with spawn attributes given previously.
-    */
-    template <process::argument_t arg_t>
-    subprocess(
-      const arg_t &args,
-      const posix_spawn_file_actions_t &spawn_action,
-      const posix_spawnattr_t &spawn_attributes,
-      const process::env &env = process::env::from_global()
-    ) {
-      // Spawn process.
-      _spawn_subprocess(args, spawn_action, spawn_attributes, env);
-      _run();
-    }
+      subprocess(spawn(args, stdout, stdin, stderr, env).value()) {}
     subprocess(subprocess &&o) {
       this->_pid = o._pid;
-      this->_is_running = o._is_running;
       o._pid = -1;
-      o._is_running = false;
     }
 
     /*
-      If the process is not running.
-      throws :
-        thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
-        std::system_error
+      This process is guaranteed to not throw, but however should not be called if the
+      process has been waited for.
     */
-    void send_signal(int sig_num) const {
-      if (!_is_running) throw process_error<process_error_code::PROCESS_IS_DEAD>{};
-      if (::kill(_pid, sig_num) == -1) throw std::system_error{errno, std::generic_category()};
+    std::expected<void, std::system_error> send_signal(int sig_num) const noexcept {
+      return invoke_sys_call(::kill, _pid, sig_num);
     }
     /*
       wait for the child in a non blocking manner. This call will modify the process object.
       If the process has been waited for before, this will return empty.
     */
-    std::optional<
-      std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>>>
-    wait_non_blocking() noexcept {
-      if (!_is_running)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+    std::expected<std::optional<process_result>, wait_unexpect_t> wait_non_blocking() noexcept {
       int status = 0;
       int wait_status = waitpid(_pid, &status, WNOHANG);
       // Fail called
       if (wait_status == -1)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)
-        }};
+        return std::unexpected{wait_unexpect_t{std::system_error{errno, std::generic_category()}}};
       // process has not changed state
       else if (wait_status == 0)
         return std::nullopt;
-      // process has changed state
-      _stop();
-      return process_result{status};
+      auto result = process_result{status};
+      if (result.is_exit_normal()) return result;
+      else
+        return std::unexpected{wait_unexpect_t{process_result_error{result}}};
     }
     /*
       waits for the child to finish execution and finish
     */
-    std::expected<process_result, process_error<process_error_code::PROCESS_WAIT_ERROR>> wait() {
-      if (!_is_running)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{}};
+    std::expected<process_result, wait_unexpect_t> wait() {
       int status = 0;
-      if (waitpid(_pid, &status, 0) == -1)
-        return std::unexpected{process_error<process_error_code::PROCESS_WAIT_ERROR>{strerror(errno)
-        }};
-      else {
-        _stop();
-        return process_result{status};
-      }
+      return invoke_sys_call(waitpid, _pid, &status, 0)
+        .transform_error([](auto &&e) { return wait_unexpect_t{e}; })
+        .and_then([&]() {
+          auto result = process_result{status};
+          if (result.is_exit_normal())
+            return std::expected<process_result, wait_unexpect_t>{result};
+          else
+            return std::expected<process_result, wait_unexpect_t>{
+              std::unexpected{wait_unexpect_t{process_result_error{result}}}
+            };
+        });
     }
     /*
       Kill a process. The outcome of this function is the same as calling
@@ -134,11 +112,11 @@ namespace moderna {
       std::system_error
       thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
     */
-    void kill() {
+    std::expected<void, std::system_error> kill() {
       /*
         Sends a sigkill signal. send_signal will handle SIGKILL
       */
-      send_signal(SIGKILL);
+      return send_signal(SIGKILL);
     }
 
     /*
@@ -146,7 +124,7 @@ namespace moderna {
       memory order for checking.
     */
     bool waitable() const {
-      return _is_running;
+      return _pid != -1;
     }
 
     ~subprocess() {
@@ -156,8 +134,11 @@ namespace moderna {
         happening. A RAII class has to kill the child.
       */
       if (waitable()) {
-        kill();
-        auto _ = wait();
+        auto _ = kill()
+                   .transform_error([](auto &&e) {
+                     return wait_unexpect_t{e};
+                   })
+                   .and_then([this]() { return wait(); });
       }
     }
 
@@ -174,70 +155,70 @@ namespace moderna {
     subprocess &operator=(const subprocess &o) = delete;
     subprocess &operator=(subprocess &&o) {
       this->_pid = o._pid;
-      this->_is_running = o._is_running;
       o._pid = -1;
-      o._is_running = false;
       return *this;
+    }
+
+    template <moderna::process::argument_t arg_t>
+    static std::expected<subprocess, std::system_error> spawn(
+      const arg_t &args,
+      int stdout = 0,
+      int stdin = 1,
+      int stderr = 2,
+      const process::env &env = process::env::from_global()
+    ) {
+      posix_spawn_file_actions_t spawn_action;
+      posix_spawnattr_t attributes;
+      pid_t pid;
+      return invoke_sys_call_returning_err_code(posix_spawn_file_actions_init, &spawn_action)
+        .and_then([&]() {
+          return invoke_sys_call_returning_err_code(
+            posix_spawn_file_actions_adddup2, &spawn_action, stdout, STDOUT_FILENO
+          );
+        })
+        .and_then([&]() {
+          return invoke_sys_call_returning_err_code(
+            posix_spawn_file_actions_adddup2, &spawn_action, stdin, STDIN_FILENO
+          );
+        })
+        .and_then([&]() {
+          return invoke_sys_call_returning_err_code(
+            posix_spawn_file_actions_adddup2, &spawn_action, stderr, STDERR_FILENO
+          );
+        })
+        .and_then([&]() {
+          return invoke_sys_call_returning_err_code(posix_spawnattr_init, &attributes);
+        })
+        .and_then([&]() {
+          return invoke_sys_call_returning_err_code(
+            posix_spawnp,
+            &pid,
+            args.command(),
+            &spawn_action,
+            &attributes,
+            const_cast<char *const *>(args.arguments()),
+            const_cast<char *const *>(env.to_c_style_arr())
+          );
+        })
+        .transform([&]() { return subprocess{pid}; });
+    }
+    template <moderna::process::argument_t arg_t>
+    static std::expected<process_result, wait_unexpect_t> run(
+      const arg_t &args,
+      int stdout = 0,
+      int stdin = 1,
+      int stderr = 2,
+      const process::env &env = process::env::from_global()
+    ) {
+      return spawn(args, stdout, stdin, stderr, env)
+        .transform_error([](auto &&e) { return wait_unexpect_t{e}; })
+        .and_then([](auto &&p) { return p.wait(); });
     }
 
   private:
     pid_t _pid;
-    bool _is_running;
-    /*
-      Function to control the boolean _is_running
-    */
-    void _run() noexcept {
-      _is_running = true;
-    }
-    void _stop() noexcept {
-      _is_running = false;
-    }
-    /*
-      Initializes _spawn_action based on the input stdout, stdin, stderr
-    */
-    posix_spawn_file_actions_t _initialize_pre_spawn_file_action(
-      int stdout, int stdin, int stderr
-    ) {
-      posix_spawn_file_actions_t spawn_action;
-      if (posix_spawn_file_actions_init(&spawn_action) == -1) {
-        throw std::system_error{errno, std::generic_category()};
-      }
-      if (posix_spawn_file_actions_adddup2(&spawn_action, stdout, 1) == -1) {
-        throw std::system_error{errno, std::generic_category()};
-      }
-      if (posix_spawn_file_actions_adddup2(&spawn_action, stdin, 0) == -1) {
-        throw std::system_error{errno, std::generic_category()};
-      }
-      if (posix_spawn_file_actions_adddup2(&spawn_action, stderr, 2) == -1) {
-        throw std::system_error{errno, std::generic_category()};
-      }
-      return spawn_action;
-    }
-    /*
-      Initializes spawn attributes
-    */
-    posix_spawnattr_t _initialize_pre_spawn_attributes() {
-      posix_spawnattr_t attributes;
-      posix_spawnattr_init(&attributes);
-      return attributes;
-    }
-
-    template <process::argument_t arg_t>
-    void _spawn_subprocess(
-      const arg_t &arguments,
-      const posix_spawn_file_actions_t &actions,
-      const posix_spawnattr_t &attributes,
-      const process::env &env
-    ) {
-      auto return_code = posix_spawnp(
-        &_pid,
-        arguments.command(),
-        &actions,
-        &attributes,
-        const_cast<char *const *>(arguments.arguments()),
-        const_cast<char *const *>(env.to_c_style_arr())
-      );
-      if (return_code != 0) throw process_error<process_error_code::EXEC_ERROR>{strerror(errno)};
+    subprocess(pid_t pid) : _pid{pid} {
+      assert(_pid != -1);
     }
   };
 };

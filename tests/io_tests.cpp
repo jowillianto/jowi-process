@@ -1,7 +1,6 @@
 import moderna.io;
 import moderna.test_lib;
 import moderna.file_lock;
-#include <format>
 #include <mutex>
 
 auto reader_test =
@@ -11,7 +10,7 @@ auto reader_test =
       []() {
         auto file_reader = moderna::io::readable_file::open(READ_FILE).value();
         moderna::test_lib::assert_equal(
-          file_reader.read().value(), "HELLO WORLD 0\nHELLO WORLD 1\nHELLO WORLD 2"
+          file_reader.read().value(), "HELLO WORLD 0\nHELLO WORLD 1\nHELLO WORLD 2\n"
         );
       }
     )
@@ -20,9 +19,9 @@ auto reader_test =
       []() {
         auto file_reader = moderna::io::readable_file::open(READ_FILE).value();
         auto read_content = file_reader.readlines().value();
-        for (int i = 0; i < read_content.size(); i += 1) {
-          moderna::test_lib::assert_equal(read_content[i], std::format("HELLO WORLD {}", i));
-        }
+        moderna::test_lib::assert_equal(read_content[0], "HELLO WORLD 0\n");
+        moderna::test_lib::assert_equal(read_content[1], "HELLO WORLD 1\n");
+        moderna::test_lib::assert_equal(read_content[2], "HELLO WORLD 2\n");
       }
     )
     .add_test("simple_read_line", []() {
