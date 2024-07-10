@@ -46,6 +46,7 @@ namespace moderna {
   */
   export struct subprocess {
     using wait_unexpect_t = moderna::variant_error<std::system_error, process_result_error>;
+    using signal_unexpect_t = moderna::variant_error<std::system_error>;
     /*
       Create and run a process
     */
@@ -67,36 +68,51 @@ namespace moderna {
       This process is guaranteed to not throw, but however should not be called if the
       process has been waited for.
     */
-    std::expected<void, std::system_error> send_signal(int sig_num) const noexcept {
+    std::expected<void, signal_unexpect_t> send_signal(int sig_num) const noexcept {
       return invoke_sys_call(::kill, _pid, sig_num);
     }
     /*
       wait for the child in a non blocking manner. This call will modify the process object.
       If the process has been waited for before, this will return empty.
     */
+    template <bool check = true>
+      requires(check)
     std::expected<std::optional<process_result>, wait_unexpect_t> wait_non_blocking() noexcept {
+      using expected_t = std::expected<std::optional<process_result>, wait_unexpect_t>;
+      return wait_non_blocking<false>()
+        .transform_error([](auto &&e) { return e.template cast_to<wait_unexpect_t>(); })
+        .and_then([](auto &&result) {
+          if (result && result->is_exit_normal()) return expected_t{result};
+          else if (!result)
+            return expected_t{ result };
+          else
+            return expected_t{std::unexpected{process_result_error{*result}}};
+        });
+    }
+    template <bool check>
+      requires(!check)
+    std::expected<std::optional<process_result>, signal_unexpect_t> wait_non_blocking() noexcept {
       int status = 0;
       int wait_status = waitpid(_pid, &status, WNOHANG);
       // Fail called
       if (wait_status == -1)
-        return std::unexpected{wait_unexpect_t{std::system_error{errno, std::generic_category()}}};
+        return std::unexpected{std::system_error{errno, std::generic_category()}};
       // process has not changed state
       else if (wait_status == 0)
         return std::nullopt;
       auto result = process_result{status};
-      if (result.is_exit_normal()) return result;
-      else
-        return std::unexpected{wait_unexpect_t{process_result_error{result}}};
+      return result;
     }
+
     /*
       waits for the child to finish execution and finish
     */
-    std::expected<process_result, wait_unexpect_t> wait() {
-      int status = 0;
-      return invoke_sys_call(waitpid, _pid, &status, 0)
-        .transform_error([](auto &&e) { return wait_unexpect_t{e}; })
-        .and_then([&]() {
-          auto result = process_result{status};
+    template <bool check = true>
+      requires(check)
+    std::expected<process_result, wait_unexpect_t> wait() noexcept {
+      return wait<false>()
+        .transform_error([](auto &&e) { return e.template cast_to<wait_unexpect_t>(); })
+        .and_then([&](auto &&result) {
           if (result.is_exit_normal())
             return std::expected<process_result, wait_unexpect_t>{result};
           else
@@ -105,6 +121,14 @@ namespace moderna {
             };
         });
     }
+    template <bool check>
+      requires(!check)
+    std::expected<process_result, signal_unexpect_t> wait() noexcept {
+      int status = 0;
+      return invoke_sys_call(waitpid, _pid, &status, 0).transform([&]() {
+        return process_result{status};
+      });
+    }
     /*
       Kill a process. The outcome of this function is the same as calling
       send_signal (9).
@@ -112,7 +136,7 @@ namespace moderna {
       std::system_error
       thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
     */
-    std::expected<void, std::system_error> kill() {
+    std::expected<void, signal_unexpect_t> kill() noexcept {
       /*
         Sends a sigkill signal. send_signal will handle SIGKILL
       */
@@ -134,11 +158,9 @@ namespace moderna {
         happening. A RAII class has to kill the child.
       */
       if (waitable()) {
-        auto _ = kill()
-                   .transform_error([](auto &&e) {
-                     return wait_unexpect_t{e};
-                   })
-                   .and_then([this]() { return wait(); });
+        auto _ =
+          kill().transform_error([](auto &&e) { return e.template cast_to<wait_unexpect_t>(); }
+          ).and_then([this]() { return wait(); });
       }
     }
 
