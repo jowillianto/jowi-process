@@ -224,7 +224,7 @@ namespace moderna {
         })
         .transform([&]() { return subprocess{pid}; });
     }
-    template <moderna::process::argument_t arg_t>
+    template <moderna::process::argument_t arg_t, bool check = true>
     static std::expected<process_result, wait_unexpect_t> run(
       const arg_t &args,
       int stdout = 0,
@@ -234,7 +234,7 @@ namespace moderna {
     ) {
       return spawn(args, stdout, stdin, stderr, env)
         .transform_error([](auto &&e) { return wait_unexpect_t{e}; })
-        .and_then([](auto &&p) { return p.wait(); });
+        .and_then([](auto &&p) { return p.template wait<check>(); });
     }
 
   private:
