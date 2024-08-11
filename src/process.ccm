@@ -10,6 +10,7 @@ module;
 #include <spawn.h>
 #include <system_error>
 #include <unistd.h>
+#include <utility>
 export module moderna.process;
 import moderna.variant_error;
 export import :argument;
@@ -68,8 +69,14 @@ namespace moderna {
       This process is guaranteed to not throw, but however should not be called if the
       process has been waited for.
     */
-    std::expected<void, signal_unexpect_t> send_signal(int sig_num) const noexcept {
-      return invoke_sys_call(::kill, _pid, sig_num);
+    std::expected<std::reference_wrapper<const subprocess>, signal_unexpect_t> send_signal(
+      int sig_num
+    ) const noexcept {
+      return invoke_sys_call(::kill, _pid, sig_num).transform([&]() { return std::cref(*this); });
+    }
+    std::expected<std::reference_wrapper<subprocess>, signal_unexpect_t> send_signal(int sig_num
+    ) noexcept {
+      return invoke_sys_call(::kill, _pid, sig_num).transform([&]() { return std::ref(*this); });
     }
     /*
       wait for the child in a non blocking manner. This call will modify the process object.
@@ -84,7 +91,7 @@ namespace moderna {
         .and_then([](auto &&result) {
           if (result && result->is_exit_normal()) return expected_t{result};
           else if (!result)
-            return expected_t{ result };
+            return expected_t{result};
           else
             return expected_t{std::unexpected{process_result_error{*result}}};
         });
@@ -136,7 +143,14 @@ namespace moderna {
       std::system_error
       thread_plus::process::process_error<thread_plus::process::process_error_code::PROCESS_IS_DEAD>
     */
-    std::expected<void, signal_unexpect_t> kill() noexcept {
+    std::expected<std::reference_wrapper<const subprocess>, signal_unexpect_t> kill(
+    ) const noexcept {
+      /*
+        Sends a sigkill signal. send_signal will handle SIGKILL
+      */
+      return send_signal(SIGKILL);
+    }
+    std::expected<std::reference_wrapper<subprocess>, signal_unexpect_t> kill() noexcept {
       /*
         Sends a sigkill signal. send_signal will handle SIGKILL
       */
@@ -160,7 +174,7 @@ namespace moderna {
       if (waitable()) {
         auto _ =
           kill().transform_error([](auto &&e) { return e.template cast_to<wait_unexpect_t>(); }
-          ).and_then([this]() { return wait(); });
+          ).and_then([this](auto &&r) { return r.get().wait(); });
       }
     }
 
