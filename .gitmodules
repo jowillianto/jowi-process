@@ -1,6 +1,0 @@
-[submodule "lib/test-lib"]
-	path = lib/test-lib
-	url = https://github.com/jowillianto/test-lib
-[submodule "libs/variant_error"]
-	path = libs/variant_error
-	url = https://github.com/jowillianto/moderna_variant_error
