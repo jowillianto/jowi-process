@@ -4,6 +4,7 @@ module;
 #include <sys/wait.h>
 #include <csignal>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <print>
 #include <spawn.h>
