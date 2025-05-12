@@ -17,7 +17,7 @@ int main(int argc, const char** argv, const char** env) {
   std::expected<
     proc::subprocess_result, proc::subprocess_error
   > res = proc::subprocess::run(
-    proc::make_argument(
+    proc::subprocess_argument(
       "echo", 
       "Hello World"
     )
@@ -39,7 +39,7 @@ int main(int argc, const char** argv, const char** env) {
   std::expected<
     proc::subprocess, proc::subprocess_error
   > res = proc::subprocess::spawn(
-    proc::make_argument(
+    proc::subprocess_argument(
       "echo", 
       "Hello World"
     )
@@ -73,7 +73,7 @@ int main(int argc, const char** argv, const char** env) {
 By default, stdin, stdout and stderr is configured to map to the current running process' stdin, stdout and stderr. However, this behaviour is configurable. The following is the call signature for subprocess::run
 ```
   subprocess:run(
-    is_argument args,
+    subprocess_argument args,
     bool check = true,
     int stdout = 0,
     int stdin = 1,
@@ -84,7 +84,7 @@ By default, stdin, stdout and stderr is configured to map to the current running
 Another method for spawning processes are as follows :
 ```
   subprocess::spawn(
-    is_argument args,
+    subprocess_argument args,
     int stdout = 0,
     int stdin = 1,
     int stderr = 2,
