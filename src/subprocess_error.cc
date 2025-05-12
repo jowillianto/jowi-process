@@ -6,7 +6,7 @@ export module moderna.process:subprocess_error;
 import :subprocess_result;
 
 namespace moderna::process {
-  struct subprocess_error : public std::exception {
+  export struct subprocess_error : public std::exception {
     std::optional<subprocess_result> run_result;
     std::string error_message;
     int error_code;

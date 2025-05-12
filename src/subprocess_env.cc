@@ -15,7 +15,7 @@ namespace moderna::process {
 
     static env_entry make(std::string_view v) {
       auto eq_pos = std::ranges::find(v, '=');
-      return env_entry{std::string_view{v.begin(), eq_pos}, std::string_view{eq_pos, v.end()}};
+      return env_entry{std::string_view{v.begin(), eq_pos}, std::string_view{eq_pos + 1, v.end()}};
     }
   };
   export class subprocess_env {

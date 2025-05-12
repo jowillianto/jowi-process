@@ -11,7 +11,7 @@ module;
 #include <unistd.h>
 export module moderna.process;
 export import :subprocess_result;
-export import :argument;
+export import :subprocess_argument;
 export import :subprocess_env;
 export import :subprocess_error;
 
@@ -40,8 +40,10 @@ namespace moderna::process {
     pid_t __pid;
     subprocess(pid_t pid) : __pid{pid} {}
 
-    std::expected<subprocess_result, subprocess_error> __check_result(subprocess_result res) {
-      if (res.exit_code() == 0) {
+    std::expected<subprocess_result, subprocess_error> __check_result(
+      subprocess_result res, bool check
+    ) {
+      if (!check || res.exit_code() == 0) {
         return res;
       } else {
         return std::unexpected{subprocess_error::from_result(std::move(res))};
@@ -74,7 +76,7 @@ namespace moderna::process {
             return expected_type{std::optional<subprocess_result>{std::nullopt}};
           } else {
             __pid = -1;
-            return __check_result(subprocess_result{status});
+            return __check_result(subprocess_result{status}, check);
           }
         });
     }
@@ -82,7 +84,7 @@ namespace moderna::process {
       int status = 0;
       return invoke_syscall(waitpid, __pid, &status, 0).and_then([&](int wait_status) {
         __pid = -1;
-        return __check_result(subprocess_result{status});
+        return __check_result(subprocess_result{status}, check);
       });
     }
     std::expected<std::reference_wrapper<subprocess>, subprocess_error> send_signal(int sig) {
@@ -90,6 +92,10 @@ namespace moderna::process {
     }
     auto kill() {
       return send_signal(SIGKILL);
+    }
+    auto kill_and_wait(bool check = true) {
+      return send_signal(SIGKILL).and_then([&](subprocess &process) { return process.wait(check); }
+      );
     }
     bool waitable() const {
       return __pid != -1;
@@ -108,7 +114,7 @@ namespace moderna::process {
       Friend Functions
     */
     static std::expected<subprocess, subprocess_error> spawn(
-      const is_argument auto &args,
+      const subprocess_argument &args,
       int stdout = 0,
       int stdin = 1,
       int stderr = 2,
@@ -149,7 +155,7 @@ namespace moderna::process {
     }
 
     static std::expected<subprocess_result, subprocess_error> run(
-      const is_argument auto &args,
+      const subprocess_argument &args,
       bool check = true,
       int stdout = 0,
       int stdin = 1,
@@ -161,4 +167,25 @@ namespace moderna::process {
       });
     }
   };
+
+  export std::expected<subprocess, subprocess_error> spawn(
+    const subprocess_argument &args,
+    int stdout = 0,
+    int stdin = 1,
+    int stderr = 2,
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::spawn(args, stdout, stdin, stderr, env);
+  }
+
+  export std::expected<subprocess_result, subprocess_error> run(
+    const subprocess_argument &args,
+    bool check = true,
+    int stdout = 0,
+    int stdin = 1,
+    int stderr = 2,
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::run(args, check, stdout, stdin, stderr, env);
+  }
 }
