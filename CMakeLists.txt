@@ -20,6 +20,7 @@ if (NOT TARGET ${PROJECT_NAME})
     PUBLIC 
       FILE_SET CXX_MODULES FILES ${${PROJECT_NAME}_src}
   )
+  target_link_libraries(${PROJECT_NAME} PUBLIC moderna_io)
 endif()
 
 if (MODERNA_PROCESS_BUILD_TESTS)
