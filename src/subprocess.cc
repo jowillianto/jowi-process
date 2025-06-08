@@ -2,14 +2,17 @@ module;
 #include <sys/mman.h>
 #include <sys/signal.h>
 #include <sys/wait.h>
+#include <chrono>
 #include <csignal>
 #include <expected>
 #include <functional>
+#include <future>
 #include <optional>
 #include <print>
 #include <spawn.h>
+#include <thread>
 #include <unistd.h>
-export module moderna.process;
+export module moderna.process:subprocess;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
@@ -64,7 +67,10 @@ namespace moderna::process {
     }
     subprocess &operator=(const subprocess &o) = delete;
 
-    // Subprocess operation
+    /*
+      wait non blockingly for a process. This will return a result if it is successful or
+      an empty optional otherwise
+    */
     std::expected<std::optional<subprocess_result>, subprocess_error> wait_non_blocking(
       bool check = true
     ) {
@@ -80,6 +86,43 @@ namespace moderna::process {
           }
         });
     }
+
+    /*
+      First, checks if the process have finished executing, and then waits for the timeout to pass
+      and checks the process again.
+    */
+    std::expected<std::optional<subprocess_result>, subprocess_error> wait_for(
+      std::chrono::milliseconds timeout, bool check = true
+    ) {
+      using result_type = std::expected<std::optional<subprocess_result>, subprocess_error>;
+      return wait_non_blocking(check).and_then([&](std::optional<subprocess_result> &&res) {
+        if (res) {
+          return result_type{res};
+        } else {
+          std::this_thread::sleep_for(timeout);
+          return wait_non_blocking(check);
+        }
+      });
+    }
+    /*
+      Waits for the timeout to pass with wait_for and then kills the process if it has not finished
+      executing.
+    */
+    std::expected<subprocess_result, subprocess_error> wait_or_kill(
+      std::chrono::milliseconds timeout, bool check
+    ) {
+      using result_type = std::expected<subprocess_result, subprocess_error>;
+      return wait_for(timeout, check).and_then([&](std::optional<subprocess_result> &&res) {
+        if (res) {
+          return result_type{res.value()};
+        } else {
+          return kill_and_wait(check);
+        }
+      });
+    }
+    /*
+      wait blockingly for the process to finish.
+    */
     std::expected<subprocess_result, subprocess_error> wait(bool check = true) {
       int status = 0;
       return invoke_syscall(waitpid, __pid, &status, 0).and_then([&](int wait_status) {
@@ -87,16 +130,31 @@ namespace moderna::process {
         return __check_result(subprocess_result{status}, check);
       });
     }
+    /*
+      sends a signal to the process
+    */
     std::expected<std::reference_wrapper<subprocess>, subprocess_error> send_signal(int sig) {
       return invoke_syscall(::kill, __pid, sig).transform([&](int res) { return std::ref(*this); });
     }
-    auto kill() {
+
+    /*
+      kills the process
+    */
+    std::expected<std::reference_wrapper<subprocess>, subprocess_error> kill() {
       return send_signal(SIGKILL);
     }
-    auto kill_and_wait(bool check = true) {
+
+    /*
+      kills and waits for the process
+    */
+    std::expected<subprocess_result, subprocess_error> kill_and_wait(bool check = true) {
       return send_signal(SIGKILL).and_then([&](subprocess &process) { return process.wait(check); }
       );
     }
+
+    /*
+      checks if the current process is waitable. i.e. check if it has been waited before.
+    */
     bool waitable() const {
       return __pid != -1;
     }
@@ -111,7 +169,7 @@ namespace moderna::process {
     }
 
     /*
-      Friend Functions
+      spawns a new process.
     */
     static std::expected<subprocess, subprocess_error> spawn(
       const subprocess_argument &args,
@@ -154,6 +212,26 @@ namespace moderna::process {
         .transform([&](auto &&) { return subprocess{pid}; });
     }
 
+    /*
+      Runs a process for timeout and then kills if it does not finish executing.
+    */
+    static std::expected<subprocess_result, subprocess_error> timed_run(
+      const subprocess_argument &args,
+      bool check = true,
+      std::chrono::milliseconds timeout = std::chrono::seconds{10},
+      int stdout = 0,
+      int stdin = 1,
+      int stderr = 2,
+      const subprocess_env &e = subprocess_env::make_env()
+    ) {
+      return spawn(args, stdout, stdin, stderr, e).and_then([&](subprocess &&proc) {
+        return proc.wait_or_kill(timeout, check);
+      });
+    }
+
+    /*
+      Runs a process and wait for it to finish
+    */
     static std::expected<subprocess_result, subprocess_error> run(
       const subprocess_argument &args,
       bool check = true,
@@ -181,6 +259,17 @@ namespace moderna::process {
   export std::expected<subprocess_result, subprocess_error> run(
     const subprocess_argument &args,
     bool check = true,
+    int stdout = 0,
+    int stdin = 1,
+    int stderr = 2,
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::run(args, check, stdout, stdin, stderr, env);
+  }
+  export std::expected<subprocess_result, subprocess_error> timed_run(
+    const subprocess_argument &args,
+    bool check = true,
+    std::chrono::milliseconds timeout = std::chrono::seconds{10},
     int stdout = 0,
     int stdin = 1,
     int stderr = 2,
