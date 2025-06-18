@@ -3,12 +3,9 @@ project(moderna_process)
 set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
+set (MODERNA_COMPONENT_NAME "file_lock")
 
 option (MODERNA_PROCESS_BUILD_TESTS "Build tests" OFF)
-
-if (NOT TARGET moderna_io) 
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/moderna-io)
-endif()
 
 if (NOT TARGET ${PROJECT_NAME})
   add_library(${PROJECT_NAME})
@@ -33,5 +30,28 @@ if (MODERNA_PROCESS_BUILD_TESTS)
     LIBRARIES ${PROJECT_NAME} moderna_io
     COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
     SANITIZERS all
+  )
+endif()
+
+include(GNUInstallDirs)
+install (
+  TARGETS ${PROJECT_NAME}
+  EXPORT moderna
+  FILE_SET 
+    CXX_MODULES 
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/moderna/${MODERNA_COMPONENT_NAME}
+    COMPONENT ${MODERNA_COMPONENT_NAME}_file_set
+  CXX_MODULES_BMI 
+    COMPONENT ${MODERNA_COMPONENT_NAME}
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/moderna/${MODERNA_COMPONENT_NAME}
+)
+
+if (PROJECT_IS_TOP_LEVEL)
+  install (
+    EXPORT moderna
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/moderna
+    FILE moderna-config.cmake
+    NAMESPACE moderna::
+    CXX_MODULES_DIRECTORY cxx_modules/moderna
   )
 endif()
