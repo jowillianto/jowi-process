@@ -3,7 +3,6 @@ project(moderna_process)
 set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
-set (MODERNA_COMPONENT_NAME "process")
 
 option (MODERNA_PROCESS_BUILD_TESTS "Build tests" OFF)
 
@@ -33,6 +32,7 @@ if (MODERNA_PROCESS_BUILD_TESTS)
   )
 endif()
 
+set (MODERNA_COMPONENT_NAME "process")
 include(GNUInstallDirs)
 install (
   TARGETS ${PROJECT_NAME}
