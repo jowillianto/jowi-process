@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.28)
-project(moderna_process)
+project(moderna_process VERSION 1.0.0)
 set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
 
 option (MODERNA_PROCESS_BUILD_TESTS "Build tests" OFF)
+
+if (NOT TARGET moderna::generic)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/moderna-generic)
+endif()
 
 add_library(${PROJECT_NAME})
 add_library(moderna::process ALIAS ${PROJECT_NAME})
@@ -17,6 +21,10 @@ target_sources(${PROJECT_NAME}
     FILE_SET CXX_MODULES FILES ${${PROJECT_NAME}_src}
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
+target_link_libraries(${PROJECT_NAME}
+  PUBLIC
+    moderna::generic
+)
 
 if (MODERNA_PROCESS_BUILD_TESTS)
   if (NOT TARGET moderna_test_lib)

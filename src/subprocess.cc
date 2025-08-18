@@ -43,16 +43,6 @@ namespace moderna::process {
     pid_t __pid;
     subprocess(pid_t pid) : __pid{pid} {}
 
-    std::expected<subprocess_result, subprocess_error> __check_result(
-      subprocess_result res, bool check
-    ) {
-      if (!check || res.exit_code() == 0) {
-        return res;
-      } else {
-        return std::unexpected{subprocess_error::from_result(std::move(res))};
-      }
-    }
-
   public:
     subprocess(const subprocess &) = delete;
 
@@ -68,7 +58,7 @@ namespace moderna::process {
     subprocess &operator=(const subprocess &o) = delete;
 
     /*
-      wait non blockingly for a process. This will return a result if it is successful or
+      wait non blockingly for a process.  This will return a result if it is successful or
       an empty optional otherwise
     */
     std::expected<std::optional<subprocess_result>, subprocess_error> wait_non_blocking(
@@ -82,7 +72,7 @@ namespace moderna::process {
             return expected_type{std::optional<subprocess_result>{std::nullopt}};
           } else {
             __pid = -1;
-            return __check_result(subprocess_result{status}, check);
+            return subprocess_error::check_status(status, check);
           }
         });
     }
@@ -127,7 +117,7 @@ namespace moderna::process {
       int status = 0;
       return invoke_syscall(waitpid, __pid, &status, 0).and_then([&](int wait_status) {
         __pid = -1;
-        return __check_result(subprocess_result{status}, check);
+        return subprocess_error::check_status(status, check);
       });
     }
     /*
@@ -148,8 +138,9 @@ namespace moderna::process {
       kills and waits for the process
     */
     std::expected<subprocess_result, subprocess_error> kill_and_wait(bool check = true) {
-      return send_signal(SIGKILL).and_then([&](subprocess &process) { return process.wait(check); }
-      );
+      return send_signal(SIGKILL).and_then([&](subprocess &process) {
+        return process.wait(check);
+      });
     }
 
     /*
@@ -160,8 +151,13 @@ namespace moderna::process {
     }
     ~subprocess() {
       if (waitable()) {
-        auto res = send_signal(SIGKILL).and_then([](subprocess &p) { return p.wait(); });
-        if (!res) std::println("WARNING: subprocess destruction error : {}", res.error().what());
+        pid_t p = pid();
+        auto kill_res = send_signal(SIGKILL);
+        // Kill or no kill wait for the process
+        auto wait_res = wait();
+        if (!wait_res) {
+          std::println(stderr, "WARN: wait(pid={}): {}", p, wait_res.error().what());
+        }
       }
     }
     pid_t pid() const noexcept {
