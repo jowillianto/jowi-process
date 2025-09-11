@@ -1,6 +1,9 @@
 [submodule "libs/test-lib"]
 	path = libs/test-lib
-	url = https://github.com/jowillianto/test-lib
+	url = https://github.com/jowillianto/jowi-test-lib
 [submodule "libs/moderna-generic"]
 	path = libs/moderna-generic
 	url = https://github.com/jowillianto/moderna-generic
+[submodule "moderna-io"]
+	path = libs/moderna-io
+	url = github.com:jowillianto/moderna-io
