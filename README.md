@@ -1,13 +1,13 @@
-# Moderna Process
+# Jowi Process
 A C++23 Library written to handle spawning subprocesses synchronously. 
 
 ## 1. Running a subprocess
 First, setup your toolchain to import the module. Then, spawning a subprocess is as easy as the following : 
 ```cpp
-import moderna.process;
+import jowi.process;
 #include <expected>
 
-namespace proc = moderna::process;
+namespace proc = jowi::process;
 
 int main(int argc, const char** argv, const char** env) {
   // Optional : Initialize the current environment
@@ -26,10 +26,10 @@ int main(int argc, const char** argv, const char** env) {
 ```
 Conversely, a process can only be spawned without waiting for it : 
 ```cpp
-import moderna.process;
+import jowi.process;
 #include <expected>
 
-namespace proc = moderna::process;
+namespace proc = jowi::process;
 
 int main(int argc, const char** argv, const char** env) {
   // Optional : Initialize the current environment
