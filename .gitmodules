@@ -3,7 +3,7 @@
 	url = https://github.com/jowillianto/jowi-test-lib
 [submodule "libs/moderna-generic"]
 	path = libs/jowi-generic
-	url = https://github.com/jowillianto/moderna-generic
+	url = https://github.com/jowillianto/jowi-generic
 [submodule "moderna-io"]
 	path = libs/moderna-io
 	url = github.com:jowillianto/moderna-io

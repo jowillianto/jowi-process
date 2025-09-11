@@ -1,4 +1,4 @@
-export module moderna.process;
+export module jowi.process;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;

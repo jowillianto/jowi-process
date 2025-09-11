@@ -1,8 +1,8 @@
 module;
 #include <sys/wait.h>
-export module moderna.process:subprocess_result;
+export module jowi.process:subprocess_result;
 
-namespace moderna::process {
+namespace jowi::process {
   export class subprocess_result {
     int _status;
 

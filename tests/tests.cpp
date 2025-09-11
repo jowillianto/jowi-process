@@ -1,75 +1,81 @@
-import moderna.test_lib;
-import moderna.process;
-import moderna.io;
-#include <moderna/test_lib.hpp>
+#include <jowi/test_lib.hpp>
 #include <string>
+import jowi.test_lib;
+import jowi.process;
+import jowi.io;
 
-namespace test_lib = moderna::test_lib;
-namespace io = moderna::io;
-namespace proc = moderna::process;
+namespace test_lib = jowi::test_lib;
+namespace io = jowi::io;
+namespace proc = jowi::process;
 
-MODERNA_SETUP(argc, argv) {
+JOWI_SETUP(argc, argv) {
   test_lib::get_test_context().set_time_unit(test_lib::test_time_unit::MILLI_SECONDS);
 }
 
-MODERNA_ADD_TEST(execute_test_normal_exit) {
-  auto null_writer = io::open_file<io::open_mode::write_truncate>("/dev/null").value();
-  auto null_reader = io::open_file<io::open_mode::read>("/dev/null").value();
-  auto completed_process = proc::run(
-    proc::subprocess_argument{TEST_CHILD_EXEC, "arg1"},
-    io::get_native_handle(null_writer),
-    io::get_native_handle(null_reader),
-    io::get_native_handle(null_writer)
+JOWI_ADD_TEST(execute_test_normal_exit) {
+  auto null_writer = test_lib::assert_expected_value(io::open_options{}.write().open("/dev/null"));
+  auto null_reader = test_lib::assert_expected_value(io::open_options{}.read().open("/dev/null"));
+  auto result = test_lib::assert_expected_value(
+    proc::run(
+      proc::subprocess_argument{TEST_CHILD_EXEC, "arg1"},
+      true,
+      null_writer,
+      null_reader,
+      null_writer
+    )
   );
-  test_lib::assert_equal(completed_process.has_value(), true);
-  auto result = completed_process.value();
   test_lib::assert_equal(result.exit_code(), 0);
 }
 
-MODERNA_ADD_TEST(execute_test_abnormal_exit) {
-  auto null_writer = io::open_file<io::open_mode::write_truncate>("/dev/null").value();
-  auto null_reader = io::open_file<io::open_mode::read>("/dev/null").value();
-  auto completed_process = proc::run(
-    proc::subprocess_argument{TEST_CHILD_EXEC},
-    false,
-    io::get_native_handle(null_writer),
-    io::get_native_handle(null_reader),
-    io::get_native_handle(null_writer)
+JOWI_ADD_TEST(execute_test_abnormal_exit) {
+  auto null_writer = test_lib::assert_expected_value(io::open_options{}.write().open("/dev/null"));
+  auto null_reader = test_lib::assert_expected_value(io::open_options{}.read().open("/dev/null"));
+  auto result = test_lib::assert_expected_value(
+    proc::run(
+      proc::subprocess_argument{TEST_CHILD_EXEC}, false, null_writer, null_reader, null_writer
+    )
   );
-  test_lib::assert_expected(completed_process);
-  auto result = completed_process.value();
   test_lib::assert_equal(result.exit_code(), 1);
 }
 
-MODERNA_ADD_TEST(execute_pipe) {
-  auto random_str = moderna::test_lib::random_string(20);
-  auto pipe = io::open_pipe().value();
-  auto completed_process = proc::run(
-    proc::subprocess_argument{TEST_CHILD_EXEC, random_str}, true, io::get_native_handle(pipe.writer)
+JOWI_ADD_TEST(execute_pipe) {
+  auto random_str = test_lib::random_string(20);
+  auto [reader, writer] = test_lib::assert_expected_value(io::open_pipe());
+  auto result = test_lib::assert_expected_value(
+    proc::run(
+      proc::subprocess_argument{TEST_CHILD_EXEC, random_str},
+      true,
+      writer,
+      io::basic_file<int>{1},
+      io::basic_file<int>{2}
+    )
   );
-  pipe.writer.close();
-  test_lib::assert_equal(completed_process.value().exit_code(), 0);
-  test_lib::assert_equal(pipe.reader.read().value(), random_str + "\n");
-}
-
-MODERNA_ADD_TEST(execute_kill) {
-  auto delay_time = std::to_string(test_lib::random_integer(1000, 5000));
-  auto process =
-    proc::spawn(proc::subprocess_argument{TEST_CHILD_EXEC, "delay", delay_time}).value();
-  test_lib::assert_equal(process.kill().has_value(), true);
-  auto completed_process = process.wait(false);
-  test_lib::assert_false(completed_process->exit_code() == 0);
-}
-
-MODERNA_ADD_TEST(wait_non_blocking_is_non_blocking) {
-  auto null_pipe = fopen("/dev/null", "w+");
-  auto fd = fileno(null_pipe);
-  auto process =
-    proc::spawn(proc::subprocess_argument(TEST_CHILD_EXEC, "delay", "1000"), fd, fd, fd).value();
-  test_lib::assert_equal(process.wait_non_blocking().value().has_value(), false);
-  auto completed_process = process.wait();
-  test_lib::assert_equal(completed_process.has_value(), true);
-  auto result = completed_process.value();
+  {
+    auto _ = std::move(writer);
+  } // close writer
   test_lib::assert_equal(result.exit_code(), 0);
-  fclose(null_pipe);
+  test_lib::assert_equal(io::make_byte_reader<2048>(std::move(reader)).read(), random_str + "\n");
+}
+
+JOWI_ADD_TEST(execute_kill) {
+  auto delay_time = std::to_string(test_lib::random_integer(1000, 5000));
+  auto process = test_lib::assert_expected_value(
+    proc::spawn(proc::subprocess_argument{TEST_CHILD_EXEC, "delay", delay_time})
+  );
+  test_lib::assert_equal(process.kill().has_value(), true);
+  auto result = test_lib::assert_expected_value(process.wait(false));
+  test_lib::assert_false(result.exit_code() == 0);
+}
+
+JOWI_ADD_TEST(wait_non_blocking_is_non_blocking) {
+  auto null_pipe =
+    test_lib::assert_expected_value(io::open_options{}.read_write().open("/dev/null"));
+  auto process = test_lib::assert_expected_value(
+    proc::spawn(
+      proc::subprocess_argument(TEST_CHILD_EXEC, "delay", "1000"), null_pipe, null_pipe, null_pipe
+    )
+  );
+  test_lib::assert_equal(process.wait_non_blocking()->has_value(), false);
+  auto result = test_lib::assert_expected_value(process.wait());
+  test_lib::assert_equal(result.exit_code(), 0);
 }

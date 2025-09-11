@@ -1,8 +1,8 @@
+#include <chrono>
+#include <csignal>
 #include <iostream>
 #include <string>
-#include <chrono>
 #include <thread>
-#include <csignal>
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -15,11 +15,10 @@ int main(int argc, char **argv) {
     std::string param = argv[2];
     if (action == "delay") {
       std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(param.c_str())));
-    }
-    else if (action == "echo_stdin") {
+    } else if (action == "echo_stdin") {
       std::string buffer;
       std::cin >> buffer;
-      std::cout<<buffer<<std::endl;
+      std::cout << buffer << std::endl;
     }
   }
 }

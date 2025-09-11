@@ -3,9 +3,9 @@ module;
 #include <string>
 #include <type_traits>
 #include <vector>
-export module moderna.process:subprocess_argument;
+export module jowi.process:subprocess_argument;
 
-namespace moderna::process {
+namespace jowi::process {
   export class subprocess_argument {
     std::string __exec;
     std::vector<std::string> __args;
@@ -55,7 +55,7 @@ namespace moderna::process {
   };
 };
 
-namespace proc = moderna::process;
+namespace proc = jowi::process;
 template <class char_type> struct std::formatter<proc::subprocess_argument, char_type> {
   constexpr auto parse(auto &ctx) {
     return ctx.begin();

@@ -1,69 +1,78 @@
 cmake_minimum_required(VERSION 3.28)
-project(moderna_process VERSION 1.0.0)
+project(jowi_process VERSION 1.0.0)
 set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
 
-option (MODERNA_PROCESS_BUILD_TESTS "Build tests" OFF)
+option (JOWI_PROCESS_BUILD_TESTS "Build tests" OFF)
 
-if (NOT TARGET moderna::generic)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/moderna-generic)
+if (NOT TARGET jowi::generic)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-generic)
+endif()
+
+if (NOT TARGET jowi::io)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-io)
 endif()
 
 add_library(${PROJECT_NAME})
-add_library(moderna::process ALIAS ${PROJECT_NAME})
-file (
-  GLOB ${PROJECT_NAME}_src
-  "${CMAKE_CURRENT_LIST_DIR}/src/*.cc"
-)
+add_library(jowi::process ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME}
   PUBLIC 
-    FILE_SET CXX_MODULES FILES ${${PROJECT_NAME}_src}
+    FILE_SET CXX_MODULES 
+    FILES 
+      ${CMAKE_CURRENT_LIST_DIR}/src/main.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_argument.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_env.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_error.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_result.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/subprocess.cc
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 target_link_libraries(${PROJECT_NAME}
   PUBLIC
-    moderna::generic
+    jowi::generic
+    jowi::io
 )
 
-if (MODERNA_PROCESS_BUILD_TESTS)
-  if (NOT TARGET moderna_test_lib)
+if (JOWI_PROCESS_BUILD_TESTS)
+  include(CTest)
+  if (NOT TARGET jowi::test_lib)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/test-lib)
   endif()
   add_executable(process_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
-  moderna_add_test(process_tests 
+  jowi_add_test(test_jowi_test 
     ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
-    LIBRARIES ${PROJECT_NAME} moderna::io
+    LIBRARIES ${PROJECT_NAME} jowi::io
     COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
     SANITIZERS all
   )
 endif()
 
-if (MODERNA_INSTALL)
+if (JOWI_INSTALL)
   include(GNUInstallDirs)
-  set (MODERNA_COMPONENT_NAME "process")
+  set (JOWI_COMPONENT_NAME "process")
   set_property(
     TARGET ${PROJECT_NAME} 
-    PROPERTY EXPORT_NAME ${MODERNA_COMPONENT_NAME}
+    PROPERTY EXPORT_NAME ${JOWI_COMPONENT_NAME}
   )
   install (
     TARGETS ${PROJECT_NAME}
-    EXPORT moderna
+    EXPORT jowi
     FILE_SET 
       CXX_MODULES 
-      DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/moderna/${MODERNA_COMPONENT_NAME}
-      COMPONENT ${MODERNA_COMPONENT_NAME}_file_set
+      DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/jowi/${JOWI_COMPONENT_NAME}
+      COMPONENT ${JOWI_COMPONENT_NAME}_file_set
     CXX_MODULES_BMI 
-      COMPONENT ${MODERNA_COMPONENT_NAME}
-      DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/moderna/${MODERNA_COMPONENT_NAME}
+      COMPONENT ${JOWI_COMPONENT_NAME}
+      DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/jowi/${JOWI_COMPONENT_NAME}
   )
-  if (NOT MODERNA_GLOBAL_INSTALL)
+  if (NOT JOWI_GLOBAL_INSTALL)
     install (
-      EXPORT moderna
-      DESTINATION ${CMAKE_INSTALL_LIBDIR}/moderna
-      FILE moderna-config.cmake
-      NAMESPACE moderna::
-      CXX_MODULES_DIRECTORY cxx_modules/moderna
+      EXPORT jowi
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/jowi
+      FILE jowi-config.cmake
+      NAMESPACE jowi::
+      CXX_MODULES_DIRECTORY cxx_modules/jowi
     )
   endif()
 endif()

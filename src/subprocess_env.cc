@@ -6,9 +6,9 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
-export module moderna.process:subprocess_env;
+export module jowi.process:subprocess_env;
 
-namespace moderna::process {
+namespace jowi::process {
   export struct env_entry {
     std::string_view name;
     std::string_view value;

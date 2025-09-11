@@ -6,19 +6,19 @@ module;
 #include <csignal>
 #include <expected>
 #include <functional>
-#include <future>
 #include <optional>
 #include <print>
 #include <spawn.h>
 #include <thread>
 #include <unistd.h>
-export module moderna.process:subprocess;
+export module jowi.process:subprocess;
+import jowi.io;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
 export import :subprocess_error;
 
-namespace moderna::process {
+namespace jowi::process {
   template <typename F, typename... Args>
     requires(std::invocable<F, Args...>)
   std::expected<int, subprocess_error> invoke_syscall(F &&sys_call, Args &&...args) {
@@ -169,9 +169,9 @@ namespace moderna::process {
     */
     static std::expected<subprocess, subprocess_error> spawn(
       const subprocess_argument &args,
-      int stdout = 0,
-      int stdin = 1,
-      int stderr = 2,
+      int out = 0,
+      int in = 1,
+      int err = 2,
       const subprocess_env &env = subprocess_env::global_env()
     ) {
       posix_spawn_file_actions_t spawn_action;
@@ -180,17 +180,17 @@ namespace moderna::process {
       return invoke_zero_syscall(posix_spawn_file_actions_init, &spawn_action)
         .and_then([&](auto &&) {
           return invoke_zero_syscall(
-            posix_spawn_file_actions_adddup2, &spawn_action, stdout, STDOUT_FILENO
+            posix_spawn_file_actions_adddup2, &spawn_action, out, STDOUT_FILENO
           );
         })
         .and_then([&](auto &&) {
           return invoke_zero_syscall(
-            posix_spawn_file_actions_adddup2, &spawn_action, stdin, STDIN_FILENO
+            posix_spawn_file_actions_adddup2, &spawn_action, in, STDIN_FILENO
           );
         })
         .and_then([&](auto &&) {
           return invoke_zero_syscall(
-            posix_spawn_file_actions_adddup2, &spawn_action, stderr, STDERR_FILENO
+            posix_spawn_file_actions_adddup2, &spawn_action, err, STDERR_FILENO
           );
         })
         .and_then([&](auto &&) { return invoke_zero_syscall(posix_spawnattr_init, &attributes); })
@@ -215,12 +215,12 @@ namespace moderna::process {
       const subprocess_argument &args,
       bool check = true,
       std::chrono::milliseconds timeout = std::chrono::seconds{10},
-      int stdout = 0,
-      int stdin = 1,
-      int stderr = 2,
+      int out = 0,
+      int in = 1,
+      int err = 2,
       const subprocess_env &e = subprocess_env::make_env()
     ) {
-      return spawn(args, stdout, stdin, stderr, e).and_then([&](subprocess &&proc) {
+      return spawn(args, out, in, err, e).and_then([&](subprocess &&proc) {
         return proc.wait_or_kill(timeout, check);
       });
     }
@@ -231,12 +231,12 @@ namespace moderna::process {
     static std::expected<subprocess_result, subprocess_error> run(
       const subprocess_argument &args,
       bool check = true,
-      int stdout = 0,
-      int stdin = 1,
-      int stderr = 2,
+      int out = 0,
+      int in = 1,
+      int err = 2,
       const subprocess_env &e = subprocess_env::make_env()
     ) {
-      return spawn(args, stdout, stdin, stderr, e).and_then([&](subprocess &&proc) {
+      return spawn(args, out, in, err, e).and_then([&](subprocess &&proc) {
         return proc.wait(check);
       });
     }
@@ -244,33 +244,69 @@ namespace moderna::process {
 
   export std::expected<subprocess, subprocess_error> spawn(
     const subprocess_argument &args,
-    int stdout = 0,
-    int stdin = 1,
-    int stderr = 2,
+    int out = 0,
+    int in = 1,
+    int err = 2,
     const subprocess_env &env = subprocess_env::global_env()
   ) {
-    return subprocess::spawn(args, stdout, stdin, stderr, env);
+    return subprocess::spawn(args, out, in, err, env);
   }
 
   export std::expected<subprocess_result, subprocess_error> run(
     const subprocess_argument &args,
     bool check = true,
-    int stdout = 0,
-    int stdin = 1,
-    int stderr = 2,
+    int out = 0,
+    int in = 1,
+    int err = 2,
     const subprocess_env &env = subprocess_env::global_env()
   ) {
-    return subprocess::run(args, check, stdout, stdin, stderr, env);
+    return subprocess::run(args, check, out, in, err, env);
   }
   export std::expected<subprocess_result, subprocess_error> timed_run(
     const subprocess_argument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
-    int stdout = 0,
-    int stdin = 1,
-    int stderr = 2,
+    int out = 0,
+    int in = 1,
+    int err = 2,
     const subprocess_env &env = subprocess_env::global_env()
   ) {
-    return subprocess::run(args, check, stdout, stdin, stderr, env);
+    return subprocess::timed_run(args, check, timeout, out, in, err, env);
   }
+  export std::expected<subprocess, subprocess_error> spawn(
+    const subprocess_argument &args,
+    const io::is_file auto &out = io::basic_file<int>{0},
+    const io::is_file auto &in = io::basic_file<int>{1},
+    const io::is_file auto &err = io::basic_file<int>{2},
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::spawn(args, out.handle().fd(), in.handle().fd(), err.handle().fd(), env);
+  }
+
+  export std::expected<subprocess_result, subprocess_error> run(
+    const subprocess_argument &args,
+    bool check = true,
+    const io::is_file auto &out = io::basic_file<int>{0},
+    const io::is_file auto &in = io::basic_file<int>{1},
+    const io::is_file auto &err = io::basic_file<int>{2},
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::run(
+      args, check, out.handle().fd(), in.handle().fd(), err.handle().fd(), env
+    );
+  }
+  export std::expected<subprocess_result, subprocess_error> timed_run(
+    const subprocess_argument &args,
+    bool check = true,
+    std::chrono::milliseconds timeout = std::chrono::seconds{10},
+    const io::is_file auto &out = io::basic_file<int>{0},
+    const io::is_file auto &in = io::basic_file<int>{1},
+    const io::is_file auto &err = io::basic_file<int>{2},
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::timed_run(
+      args, check, timeout, out.handle().fd(), in.handle().fd(), err.handle().fd(), env
+    );
+  }
+
 }
