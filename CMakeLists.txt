@@ -14,6 +14,10 @@ if (NOT TARGET jowi::io)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-io)
 endif()
 
+if (NOT TARGET jowi::asio)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
+endif()
+
 add_library(${PROJECT_NAME})
 add_library(jowi::process ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME}
@@ -26,12 +30,15 @@ target_sources(${PROJECT_NAME}
       ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_error.cc
       ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_result.cc
       ${CMAKE_CURRENT_LIST_DIR}/src/subprocess.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/unique_pid.cc
+      ${CMAKE_CURRENT_LIST_DIR}/src/asio.cc
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 target_link_libraries(${PROJECT_NAME}
   PUBLIC
     jowi::generic
     jowi::io
+    jowi::asio
 )
 
 if (JOWI_PROCESS_BUILD_TESTS)
@@ -40,6 +47,7 @@ if (JOWI_PROCESS_BUILD_TESTS)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/test-lib)
   endif()
   add_executable(process_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
+  target_link_libraries(process_child PRIVATE jowi::process)
   jowi_add_test(test_jowi_test 
     ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
     LIBRARIES ${PROJECT_NAME} jowi::io

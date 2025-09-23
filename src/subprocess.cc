@@ -3,104 +3,71 @@ module;
 #include <sys/signal.h>
 #include <sys/wait.h>
 #include <chrono>
+#include <coroutine>
 #include <csignal>
 #include <expected>
 #include <functional>
 #include <optional>
-#include <print>
 #include <spawn.h>
 #include <thread>
 #include <unistd.h>
 export module jowi.process:subprocess;
 import jowi.io;
+import jowi.asio;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
 export import :subprocess_error;
+export import :unique_pid;
+export import :asio;
 
 namespace jowi::process {
-  template <typename F, typename... Args>
-    requires(std::invocable<F, Args...>)
-  std::expected<int, subprocess_error> invoke_syscall(F &&sys_call, Args &&...args) {
-    int res = std::invoke(std::forward<F>(sys_call), std::forward<Args>(args)...);
-    int err_no = errno;
-    if (res == -1) {
-      return std::unexpected{subprocess_error::from_errcode(err_no)};
-    }
-    return res;
-  }
-  template <typename F, typename... Args>
-    requires(std::invocable<F, Args...>)
-  std::expected<int, subprocess_error> invoke_zero_syscall(F &&sys_call, Args &&...args) {
-    int err_no = std::invoke(std::forward<F>(sys_call), std::forward<Args>(args)...);
-    if (err_no == 0) {
-      return err_no;
-    }
-    return std::unexpected{subprocess_error::from_errcode(err_no)};
-  };
-
+  /**
+   * @brief RAII wrapper around a spawned POSIX process with synchronous and async utilities.
+   */
   export class subprocess {
-    pid_t __pid;
-    subprocess(pid_t pid) : __pid{pid} {}
+    unique_pid __p;
+    /**
+     * @brief Adopt an existing process identifier produced by `posix_spawn`.
+     * @param pid Process identifier to manage.
+     */
+    explicit subprocess(pid_t pid) : __p{pid} {}
 
   public:
-    subprocess(const subprocess &) = delete;
-
-    // Delete copy constructor
-    subprocess(subprocess &&o) : __pid{o.__pid} {
-      o.__pid = -1;
-    }
-    subprocess &operator=(subprocess &&o) {
-      __pid = o.__pid;
-      o.__pid = -1;
-      return *this;
-    }
-    subprocess &operator=(const subprocess &o) = delete;
-
-    /*
-      wait non blockingly for a process.  This will return a result if it is successful or
-      an empty optional otherwise
-    */
+    /**
+     * @brief Wait non-blockingly for process completion, returning `std::nullopt` if still running.
+     * @param check When true, non-zero exits surface as errors.
+     */
     std::expected<std::optional<subprocess_result>, subprocess_error> wait_non_blocking(
       bool check = true
     ) {
-      using expected_type = std::expected<std::optional<subprocess_result>, subprocess_error>;
-      int status = 0;
-      return invoke_syscall(waitpid, __pid, &status, WNOHANG)
-        .and_then([&](int wait_status) -> expected_type {
-          if (wait_status == 0) {
-            return expected_type{std::optional<subprocess_result>{std::nullopt}};
-          } else {
-            __pid = -1;
-            return subprocess_error::check_status(status, check);
-          }
-        });
+      return __p.wait_non_blocking(check);
     }
 
-    /*
-      First, checks if the process have finished executing, and then waits for the timeout to pass
-      and checks the process again.
-    */
+    /**
+     * @brief Poll the process until the timeout elapses, sleeping briefly between checks.
+     * @param timeout Duration to keep polling before giving up.
+     * @param check When true, non-zero exits surface as errors.
+     */
     std::expected<std::optional<subprocess_result>, subprocess_error> wait_for(
       std::chrono::milliseconds timeout, bool check = true
-    ) {
-      using result_type = std::expected<std::optional<subprocess_result>, subprocess_error>;
-      return wait_non_blocking(check).and_then([&](std::optional<subprocess_result> &&res) {
-        if (res) {
-          return result_type{res};
-        } else {
-          std::this_thread::sleep_for(timeout);
-          return wait_non_blocking(check);
-        }
-      });
+    ) noexcept {
+      auto tp = std::chrono::system_clock::now() + timeout;
+      auto res = __p.wait_non_blocking(check);
+      while (res && !res->has_value() && std::chrono::system_clock::now() <= tp) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+        res = __p.wait_non_blocking(check);
+      }
+      return res;
     }
-    /*
-      Waits for the timeout to pass with wait_for and then kills the process if it has not finished
-      executing.
-    */
+    /**
+     * @brief Wait for the timeout and kill the process if it is still running afterwards.
+     * @param timeout Maximum duration to wait before killing the process.
+     * @param check When true, non-zero exits surface as errors.
+     */
     std::expected<subprocess_result, subprocess_error> wait_or_kill(
       std::chrono::milliseconds timeout, bool check
-    ) {
+    ) noexcept {
       using result_type = std::expected<subprocess_result, subprocess_error>;
       return wait_for(timeout, check).and_then([&](std::optional<subprocess_result> &&res) {
         if (res) {
@@ -110,63 +77,88 @@ namespace jowi::process {
         }
       });
     }
-    /*
-      wait blockingly for the process to finish.
-    */
-    std::expected<subprocess_result, subprocess_error> wait(bool check = true) {
-      int status = 0;
-      return invoke_syscall(waitpid, __pid, &status, 0).and_then([&](int wait_status) {
-        __pid = -1;
-        return subprocess_error::check_status(status, check);
-      });
-    }
-    /*
-      sends a signal to the process
-    */
-    std::expected<std::reference_wrapper<subprocess>, subprocess_error> send_signal(int sig) {
-      return invoke_syscall(::kill, __pid, sig).transform([&](int res) { return std::ref(*this); });
+    /**
+     * @brief Wait blockingly for the process to finish.
+     * @param check When true, non-zero exits surface as errors.
+     */
+    std::expected<subprocess_result, subprocess_error> wait(bool check = true) noexcept {
+      return __p.wait(check);
     }
 
-    /*
-      kills the process
-    */
+    /**
+     * @brief Create an awaitable that resolves when the process completes.
+     * @param check When true, non-zero exits surface as errors.
+     */
+    process_wait async_wait(bool check = true) noexcept {
+      return process_wait{__p, check};
+    }
+
+    /**
+     * @brief Create an awaitable that polls until timeout before forcing completion.
+     * @param timeout Maximum duration to poll before yielding control.
+     * @param check When true, non-zero exits surface as errors.
+     */
+    process_wait_for async_wait_for(std::chrono::milliseconds timeout, bool check = true) noexcept {
+      return process_wait_for{__p, timeout, check};
+    }
+    /**
+     * @brief Send a signal to the process and return a reference to this wrapper.
+     * @param sig Signal number to deliver.
+     */
+    std::expected<std::reference_wrapper<subprocess>, subprocess_error> send_signal(
+      int sig
+    ) noexcept {
+      return __p.send_signal(sig).transform([&](auto &&) { return std::ref(*this); });
+    }
+
+    /**
+     * @brief Send a signal to the process on a const wrapper and return a reference.
+     * @param sig Signal number to deliver.
+     */
+    std::expected<std::reference_wrapper<const subprocess>, subprocess_error> send_signal(
+      int sig
+    ) const noexcept {
+      return __p.send_signal(sig).transform([&](auto &&) { return std::ref(*this); });
+    }
+
+    /**
+     * @brief Send `SIGKILL` to terminate the process.
+     */
     std::expected<std::reference_wrapper<subprocess>, subprocess_error> kill() {
       return send_signal(SIGKILL);
     }
 
-    /*
-      kills and waits for the process
-    */
+    /**
+     * @brief Kill the process and then wait for it to exit.
+     * @param check When true, non-zero exits surface as errors.
+     */
     std::expected<subprocess_result, subprocess_error> kill_and_wait(bool check = true) {
       return send_signal(SIGKILL).and_then([&](subprocess &process) {
         return process.wait(check);
       });
     }
 
-    /*
-      checks if the current process is waitable. i.e. check if it has been waited before.
-    */
+    /**
+     * @brief Determine whether the wrapped process can still be waited on.
+     */
     bool waitable() const {
-      return __pid != -1;
+      return __p.pid() != -1;
     }
-    ~subprocess() {
-      if (waitable()) {
-        pid_t p = pid();
-        auto kill_res = send_signal(SIGKILL);
-        // Kill or no kill wait for the process
-        auto wait_res = wait();
-        if (!wait_res) {
-          std::println(stderr, "WARN: wait(pid={}): {}", p, wait_res.error().what());
-        }
-      }
-    }
+    /**
+     * @brief Retrieve the underlying process identifier.
+     */
     pid_t pid() const noexcept {
-      return __pid;
+      return __p.pid();
     }
 
-    /*
-      spawns a new process.
-    */
+    /**
+     * @brief Spawn a new subprocess using `posix_spawnp` with optional file descriptor overrides.
+     * @param args Executable and argument vector to launch.
+     * @param out File descriptor wired to the child stdout stream.
+     * @param in File descriptor wired to the child stdin stream.
+     * @param err File descriptor wired to the child stderr stream.
+     * @param env Environment definition to expose to the child process.
+     */
     static std::expected<subprocess, subprocess_error> spawn(
       const subprocess_argument &args,
       int out = 0,
@@ -177,25 +169,25 @@ namespace jowi::process {
       posix_spawn_file_actions_t spawn_action;
       posix_spawnattr_t attributes;
       pid_t pid;
-      return invoke_zero_syscall(posix_spawn_file_actions_init, &spawn_action)
+      return sys_call_return_err(posix_spawn_file_actions_init, &spawn_action)
         .and_then([&](auto &&) {
-          return invoke_zero_syscall(
+          return sys_call_return_err(
             posix_spawn_file_actions_adddup2, &spawn_action, out, STDOUT_FILENO
           );
         })
         .and_then([&](auto &&) {
-          return invoke_zero_syscall(
+          return sys_call_return_err(
             posix_spawn_file_actions_adddup2, &spawn_action, in, STDIN_FILENO
           );
         })
         .and_then([&](auto &&) {
-          return invoke_zero_syscall(
+          return sys_call_return_err(
             posix_spawn_file_actions_adddup2, &spawn_action, err, STDERR_FILENO
           );
         })
-        .and_then([&](auto &&) { return invoke_zero_syscall(posix_spawnattr_init, &attributes); })
+        .and_then([&](auto &&) { return sys_call_return_err(posix_spawnattr_init, &attributes); })
         .and_then([&](auto &&) {
-          return invoke_zero_syscall(
+          return sys_call_return_err(
             posix_spawnp,
             &pid,
             args.exec(),
@@ -208,9 +200,16 @@ namespace jowi::process {
         .transform([&](auto &&) { return subprocess{pid}; });
     }
 
-    /*
-      Runs a process for timeout and then kills if it does not finish executing.
-    */
+    /**
+     * @brief Run a subprocess, wait for the timeout, and kill if it outlives the deadline.
+     * @param args Executable and arguments to launch.
+     * @param check When true, non-zero exits surface as errors.
+     * @param timeout Maximum time the subprocess is allowed to run.
+     * @param out File descriptor wired to the child stdout stream.
+     * @param in File descriptor wired to the child stdin stream.
+     * @param err File descriptor wired to the child stderr stream.
+     * @param e Environment definition to expose to the child process.
+     */
     static std::expected<subprocess_result, subprocess_error> timed_run(
       const subprocess_argument &args,
       bool check = true,
@@ -225,9 +224,15 @@ namespace jowi::process {
       });
     }
 
-    /*
-      Runs a process and wait for it to finish
-    */
+    /**
+     * @brief Run a subprocess synchronously until completion.
+     * @param args Executable and arguments to launch.
+     * @param check When true, non-zero exits surface as errors.
+     * @param out File descriptor wired to the child stdout stream.
+     * @param in File descriptor wired to the child stdin stream.
+     * @param err File descriptor wired to the child stderr stream.
+     * @param e Environment definition to expose to the child process.
+     */
     static std::expected<subprocess_result, subprocess_error> run(
       const subprocess_argument &args,
       bool check = true,
@@ -240,8 +245,72 @@ namespace jowi::process {
         return proc.wait(check);
       });
     }
+
+    /**
+     * @brief Spawn and await a subprocess using coroutines.
+     * @param args Executable and arguments to launch.
+     * @param check When true, non-zero exits surface as errors.
+     * @param out File descriptor wired to the child stdout stream.
+     * @param in File descriptor wired to the child stdin stream.
+     * @param err File descriptor wired to the child stderr stream.
+     * @param e Environment definition to expose to the child process.
+     */
+    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+      const subprocess_argument &args,
+      bool check = true,
+      int out = 0,
+      int in = 1,
+      int err = 2,
+      const subprocess_env &e = subprocess_env::make_env()
+    ) {
+      auto proc = spawn(args, out, in, err, e);
+      if (!proc) {
+        co_return std::unexpected{proc.error()};
+      }
+      co_return co_await proc->async_wait(check);
+    }
+
+    /**
+     * @brief Spawn and await a subprocess with a timeout, killing if it exceeds the limit.
+     * @param args Executable and arguments to launch.
+     * @param check When true, non-zero exits surface as errors.
+     * @param timeout Maximum time the subprocess is allowed to run.
+     * @param out File descriptor wired to the child stdout stream.
+     * @param in File descriptor wired to the child stdin stream.
+     * @param err File descriptor wired to the child stderr stream.
+     * @param e Environment definition to expose to the child process.
+     */
+    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+      const subprocess_argument &args,
+      bool check = true,
+      std::chrono::milliseconds timeout = std::chrono::seconds{10},
+      int out = 0,
+      int in = 1,
+      int err = 2,
+      const subprocess_env &e = subprocess_env::make_env()
+    ) {
+      auto proc = spawn(args, out, in, err, e);
+      if (!proc) {
+        co_return std::unexpected{proc.error()};
+      }
+      auto res = co_await proc->async_wait_for(timeout, check);
+      if (!res) {
+        co_return std::unexpected{res.error()};
+      } else if (res->has_value()) {
+        co_return res->value();
+      }
+      co_return proc->kill_and_wait(check);
+    }
   };
 
+  /**
+   * @brief Convenience wrapper to spawn a subprocess returning the `subprocess` handle.
+   * @param args Executable and arguments to launch.
+   * @param out File descriptor wired to the child stdout stream.
+   * @param in File descriptor wired to the child stdin stream.
+   * @param err File descriptor wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess, subprocess_error> spawn(
     const subprocess_argument &args,
     int out = 0,
@@ -252,6 +321,15 @@ namespace jowi::process {
     return subprocess::spawn(args, out, in, err, env);
   }
 
+  /**
+   * @brief Spawn and synchronously wait for a subprocess using the global environment.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param out File descriptor wired to the child stdout stream.
+   * @param in File descriptor wired to the child stdin stream.
+   * @param err File descriptor wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess_result, subprocess_error> run(
     const subprocess_argument &args,
     bool check = true,
@@ -262,6 +340,16 @@ namespace jowi::process {
   ) {
     return subprocess::run(args, check, out, in, err, env);
   }
+  /**
+   * @brief Spawn and wait with a timeout, killing the process if it exceeds the deadline.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param timeout Maximum time the subprocess is allowed to run.
+   * @param out File descriptor wired to the child stdout stream.
+   * @param in File descriptor wired to the child stdin stream.
+   * @param err File descriptor wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess_result, subprocess_error> timed_run(
     const subprocess_argument &args,
     bool check = true,
@@ -273,6 +361,54 @@ namespace jowi::process {
   ) {
     return subprocess::timed_run(args, check, timeout, out, in, err, env);
   }
+  /**
+   * @brief Coroutine helper to spawn and await a subprocess completion.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param out File descriptor wired to the child stdout stream.
+   * @param in File descriptor wired to the child stdin stream.
+   * @param err File descriptor wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+    const subprocess_argument &args,
+    bool check = true,
+    int out = 0,
+    int in = 1,
+    int err = 2,
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::async_run(args, check, out, in, err, env);
+  }
+  /**
+   * @brief Coroutine helper to spawn, await with timeout, and kill lingering processes.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param timeout Maximum time the subprocess is allowed to run.
+   * @param out File descriptor wired to the child stdout stream.
+   * @param in File descriptor wired to the child stdin stream.
+   * @param err File descriptor wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+    const subprocess_argument &args,
+    bool check = true,
+    std::chrono::milliseconds timeout = std::chrono::seconds{10},
+    int out = 0,
+    int in = 1,
+    int err = 2,
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::async_timed_run(args, check, timeout, out, in, err, env);
+  }
+  /**
+   * @brief Spawn a subprocess using file wrapper handles for standard streams.
+   * @param args Executable and arguments to launch.
+   * @param out File wrapper wired to the child stdout stream.
+   * @param in File wrapper wired to the child stdin stream.
+   * @param err File wrapper wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess, subprocess_error> spawn(
     const subprocess_argument &args,
     const io::is_file auto &out = io::basic_file<int>{0},
@@ -283,6 +419,15 @@ namespace jowi::process {
     return subprocess::spawn(args, out.handle().fd(), in.handle().fd(), err.handle().fd(), env);
   }
 
+  /**
+   * @brief Run a subprocess synchronously while configuring standard streams via file wrappers.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param out File wrapper wired to the child stdout stream.
+   * @param in File wrapper wired to the child stdin stream.
+   * @param err File wrapper wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess_result, subprocess_error> run(
     const subprocess_argument &args,
     bool check = true,
@@ -295,6 +440,16 @@ namespace jowi::process {
       args, check, out.handle().fd(), in.handle().fd(), err.handle().fd(), env
     );
   }
+  /**
+   * @brief Run a subprocess with a timeout while providing file wrappers for standard streams.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param timeout Maximum time the subprocess is allowed to run.
+   * @param out File wrapper wired to the child stdout stream.
+   * @param in File wrapper wired to the child stdin stream.
+   * @param err File wrapper wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
   export std::expected<subprocess_result, subprocess_error> timed_run(
     const subprocess_argument &args,
     bool check = true,
@@ -306,6 +461,56 @@ namespace jowi::process {
   ) {
     return subprocess::timed_run(
       args, check, timeout, out.handle().fd(), in.handle().fd(), err.handle().fd(), env
+    );
+  }
+  /**
+   * @brief Coroutine wrapper combining file handles with asynchronous subprocess execution.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param out File wrapper wired to the child stdout stream.
+   * @param in File wrapper wired to the child stdin stream.
+   * @param err File wrapper wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+    const subprocess_argument &args,
+    bool check = true,
+    const io::is_file auto &out = io::basic_file<int>{0},
+    const io::is_file auto &in = io::basic_file<int>{1},
+    const io::is_file auto &err = io::basic_file<int>{2},
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::async_run(
+      args, check, out.handle().fd(), in.handle().fd(), err.handle().fd(), env
+    );
+  }
+  /**
+   * @brief Coroutine wrapper that enforces a timeout while using file handles for streams.
+   * @param args Executable and arguments to launch.
+   * @param check When true, non-zero exits surface as errors.
+   * @param timeout Maximum time the subprocess is allowed to run.
+   * @param out File wrapper wired to the child stdout stream.
+   * @param in File wrapper wired to the child stdin stream.
+   * @param err File wrapper wired to the child stderr stream.
+   * @param env Environment definition to expose to the child process.
+   */
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+    const subprocess_argument &args,
+    bool check = true,
+    std::chrono::milliseconds timeout = std::chrono::seconds{10},
+    const io::is_file auto &out = io::basic_file<int>{0},
+    const io::is_file auto &in = io::basic_file<int>{1},
+    const io::is_file auto &err = io::basic_file<int>{2},
+    const subprocess_env &env = subprocess_env::global_env()
+  ) {
+    return subprocess::async_timed_run(
+      args,
+      check,
+      timeout,
+      out.handle().fd(),
+      in.handle().fd(),
+      err.handle().fd(),
+      env
     );
   }
 

@@ -1,93 +1,126 @@
 # Jowi Process
-A C++23 Library written to handle spawning subprocesses synchronously. 
 
-## 1. Running a subprocess
-First, setup your toolchain to import the module. Then, spawning a subprocess is as easy as the following : 
+## Overview
+`jowi::process` delivers a C++23 module for launching and supervising POSIX subprocesses with modern C++ primitives. The public surface focuses on four components:
+
+- `subprocess` – synchronous and coroutine-based process management.
+- `subprocess_env` – environment snapshots and overrides passed to child processes.
+- `subprocess_result` – inspection utilities for exit statuses.
+- `subprocess_error` – rich error information surfaced through `std::expected`.
+
+Each is exported through the umbrella module:
+
+```cpp
+import jowi.process;
+```
+
+## Requirements
+- CMake 3.28+ with C++23 module support (`CMAKE_CXX_SCAN_FOR_MODULES` is enabled in the project).
+- A POSIX platform that provides `posix_spawnp`, `waitpid`, and signals.
+- Companion libraries `jowi::generic`, `jowi::io`, and `jowi::asio` are fetched automatically via the top-level CMake configuration.
+
+## Build & Link
+```bash
+cmake -S . -B build -DJOWI_PROCESS_BUILD_TESTS=ON
+cmake --build build
+```
+
+From another project:
+
+```cmake
+find_package(jowi CONFIG REQUIRED)
+
+add_executable(example main.cpp)
+target_link_libraries(example PRIVATE jowi::process)
+```
+
+## API Highlights
+### subprocess
+`subprocess` wraps process creation and waiting. The helpers `spawn`, `run`, `timed_run`, `async_run`, and `async_timed_run` all return `std::expected` objects that either hold a result or a `subprocess_error`.
+
 ```cpp
 import jowi.process;
 #include <expected>
+#include <print>
 
-namespace proc = jowi::process;
+using namespace jowi::process;
 
-int main(int argc, const char** argv, const char** env) {
-  // Optional : Initialize the current environment
-  proc::subprocess_env::init(env);
+int main(int, const char **, const char **envp) {
+  subprocess_env::init(envp); // call once near program start if you need the ambient environment
 
-  // Run a process, example echo something
-  std::expected<
-    proc::subprocess_result, proc::subprocess_error
-  > res = proc::subprocess::run(
-    proc::subprocess_argument(
-      "echo", 
-      "Hello World"
-    )
-  );
+  auto status = run(subprocess_argument{"echo", "Hello", "Process"});
+  if (!status) {
+    std::print(stderr, "spawn failed: {}\n", status.error().what());
+    return 1;
+  }
+
+  std::print("exit code: {}\n", status->exit_code());
+  return 0;
 }
 ```
-Conversely, a process can only be spawned without waiting for it : 
+
+Coroutines integrate through the `async_run` and `async_timed_run` factories:
+
 ```cpp
 import jowi.process;
-#include <expected>
+import jowi.asio; // provides asio::basic_task
+#include <print>
 
-namespace proc = jowi::process;
+asio::basic_task<void> gather_info() {
+  using namespace jowi::process;
 
-int main(int argc, const char** argv, const char** env) {
-  // Optional : Initialize the current environment
-  proc::subprocess_env::init(env);
-
-  // Run a process, example echo something
-  std::expected<
-    proc::subprocess, proc::subprocess_error
-  > res = proc::subprocess::spawn(
-    proc::subprocess_argument(
-      "echo", 
-      "Hello World"
-    )
+  auto result = co_await async_timed_run(
+    subprocess_argument{"uname", "-a"},
+    true,
+    std::chrono::seconds{2}
   );
 
-  // Send Signal
-  std::expected<
-    std::reference_wrapper<proc::subprocess>, proc::subprocess_error
-  > send_res = res -> send_signal(SIGTERM);
-
-  // Kill
-  std::expected<
-    std::reference_wrapper<proc::subprocess>, proc::subprocess_error
-  > kill_res = res -> kill();
-
-  // get the pid
-  pid_t pid = res -> pid();
-
-  // wait non blockingly
-  std::expected<
-    std::optional<proc::subprocess_result>, proc::subprocess_error
-  > opt_wait_res = res -> wait_non_blocking();
-
-  std::expected<
-    proc::subprocess_result, proc::subprocess_error
-  > wait_res = res -> wait();
+  if (!result) {
+    throw result.error();
+  }
 }
 ```
 
-## 2. Configuring stdin, stdout, stderr. 
-By default, stdin, stdout and stderr is configured to map to the current running process' stdin, stdout and stderr. However, this behaviour is configurable. The following is the call signature for subprocess::run
+### subprocess_env
+`subprocess_env` captures environment variables passed to a child. Build an instance with `make_env`, adjust values with `set`, and pass it into any `subprocess` factory.
+
+```cpp
+using namespace jowi::process;
+
+subprocess_env env = subprocess_env::make_env();
+env.set("MY_FLAG", "1");
+
+auto res = run(subprocess_argument{"printenv", "MY_FLAG"}, true, 0, 1, 2, env);
 ```
-  subprocess:run(
-    subprocess_argument args,
-    bool check = true,
-    int stdout = 0,
-    int stdin = 1,
-    int stderr = 2,
-    const subprocess_env& e = subprocess_env::make_env()
-  ) -> std::expected<subprocess_result, subprocess_error>
+
+### subprocess_result
+When a process completes successfully, the helper exposes queries about the exit reason.
+
+```cpp
+if (status->is_normal()) {
+  std::print("normal exit -> {}\n", status->exit_code());
+} else if (status->is_terminated()) {
+  std::print("terminated by signal -> {}\n", status->exit_code());
+}
 ```
-Another method for spawning processes are as follows :
+
+### subprocess_error
+Failures are represented as `subprocess_error`. You can either read the message via `what()` or inspect the stored data.
+
+```cpp
+auto maybe_proc = spawn(subprocess_argument{"/bin/false"});
+if (!maybe_proc) {
+  if (auto code = maybe_proc.error().error_code()) {
+    std::print(stderr, "errno: {}\n", *code);
+  }
+}
 ```
-  subprocess::spawn(
-    subprocess_argument args,
-    int stdout = 0,
-    int stdin = 1,
-    int stderr = 2,
-    const subprocess_env& e = subprocess_env::make_env()
-  ) -> std::expected<subprocess, subprocess_error>
-```
+
+## Worth Noting
+- Library functions report failures through `std::expected`; they do not throw exceptions except for `std::bad_alloc`, which would typically terminate the program.
+
+## Testing
+Set `JOWI_PROCESS_BUILD_TESTS=ON` to compile the unit tests under `tests/`. They exercise spawning, waiting, signalling, and environment wiring.
+
+## License
+Distributed under the MIT License. See [`LICENSE`](LICENSE).

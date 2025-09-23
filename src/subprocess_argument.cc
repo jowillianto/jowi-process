@@ -6,12 +6,20 @@ module;
 export module jowi.process:subprocess_argument;
 
 namespace jowi::process {
+  /**
+   * @brief Builds an argv-style command line for spawning subprocesses.
+   */
   export class subprocess_argument {
     std::string __exec;
     std::vector<std::string> __args;
     mutable std::vector<const char *> __converted;
 
   public:
+    /**
+     * @brief Construct the argument list with an executable name and initial arguments.
+     * @param exec Path to the executable to run.
+     * @param args Additional arguments to pass to the process.
+     */
     template <typename... Args>
       requires(std::is_constructible_v<std::string, Args> && ...)
     subprocess_argument(std::string exec, Args &&...args) : __exec{exec} {
@@ -19,12 +27,20 @@ namespace jowi::process {
       (__args.emplace_back(std::string{std::forward<Args>(args)}), ...);
     }
 
+    /**
+     * @brief Append additional arguments to the command line.
+     * @param args Arguments to append in order.
+     */
     template <typename... Args>
       requires(std::is_constructible_v<std::string, Args> && ...)
     subprocess_argument &add_argument(Args &&...args) {
       (__args.emplace_back(std::string{std::forward<Args>(args)}), ...);
       return *this;
     }
+    /**
+     * @brief Append each element of a range as an argument.
+     * @param range Container whose elements will be appended.
+     */
     template <std::ranges::range range_type>
       requires(std::is_constructible_v<std::string, std::ranges::range_value_t<range_type>>)
     subprocess_argument &add_argument(range_type &&range) {
@@ -33,6 +49,9 @@ namespace jowi::process {
       }
       return *this;
     }
+    /**
+     * @brief Produce a null-terminated vector of C strings suitable for POSIX APIs.
+     */
     const char *const *args() const noexcept {
       __converted.clear();
       __converted.reserve(__args.size() + 2);
@@ -42,13 +61,22 @@ namespace jowi::process {
       *it = nullptr;
       return __converted.data();
     }
+    /**
+     * @brief Retrieve the executable path.
+     */
     const char *exec() const noexcept {
       return __exec.c_str();
     }
 
+    /**
+     * @brief Iterate over appended arguments.
+     */
     constexpr auto begin() const noexcept {
       return __args.begin();
     }
+    /**
+     * @brief Sentinel for argument iteration.
+     */
     constexpr auto end() const noexcept {
       return __args.end();
     }
@@ -56,10 +84,22 @@ namespace jowi::process {
 };
 
 namespace proc = jowi::process;
+/**
+ * @brief Formatter to print subprocess arguments using `std::format`.
+ */
 template <class char_type> struct std::formatter<proc::subprocess_argument, char_type> {
+  /**
+   * @brief Accept the default formatter behaviour.
+   * @param ctx Parsing context provided by the formatter.
+   */
   constexpr auto parse(auto &ctx) {
     return ctx.begin();
   }
+  /**
+   * @brief Write the executable and arguments into the target format context.
+   * @param args Argument builder to serialise.
+   * @param ctx Formatting context receiving the output.
+   */
   constexpr auto format(const proc::subprocess_argument &args, auto &ctx) const {
     std::format_to(ctx.out(), "{} ", args.exec());
     for (const auto &command : args) {

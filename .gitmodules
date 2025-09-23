@@ -7,3 +7,6 @@
 [submodule "libs/jowi-io"]
 	path = libs/jowi-io
 	url = github.com:jowillianto/jowi-io
+[submodule "libs/jowi-asio"]
+	path = libs/jowi-asio
+	url = github.com:jowillianto/jowi-asio
