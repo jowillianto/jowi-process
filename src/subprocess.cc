@@ -274,7 +274,7 @@ namespace jowi::process {
      * @param err Optional file descriptor duplicated to the child stderr stream.
      * @param e Environment definition to expose to the child process.
      */
-    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+    static asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
       const subprocess_argument &args,
       bool check = true,
       std::optional<int> out = STDOUT_FILENO,
@@ -299,7 +299,7 @@ namespace jowi::process {
      * @param err Optional file descriptor duplicated to the child stderr stream.
      * @param e Environment definition to expose to the child process.
      */
-    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+    static asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
       const subprocess_argument &args,
       bool check = true,
       std::chrono::milliseconds timeout = std::chrono::seconds{10},
@@ -389,7 +389,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
     const subprocess_argument &args,
     bool check = true,
     std::optional<int> out = STDOUT_FILENO,
@@ -409,7 +409,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
     const subprocess_argument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
@@ -497,7 +497,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
+  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
     const subprocess_argument &args,
     bool check = true,
     const io::is_file auto &out = io::basic_file<int>{STDOUT_FILENO},
@@ -520,7 +520,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
     const subprocess_argument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},

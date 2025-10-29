@@ -94,7 +94,7 @@ namespace jowi::process {
     bool await_ready() {
       __res = __p.get().wait_non_blocking(__check);
       if (!__res) {
-        return true;
+        return false;
       }
       if (!__res->has_value()) {
         return true;
@@ -103,7 +103,13 @@ namespace jowi::process {
       if (optional_result.has_value()) {
         return true;
       }
-      return __tp <= std::chrono::system_clock::now();
+      if (std::chrono::system_clock::now() >= __tp) {
+        __res.emplace(
+          std::expected<std::optional<subprocess_result>, subprocess_error>{std::nullopt}
+        );
+        return true;
+      }
+      return false;
     }
 
     /**
@@ -111,7 +117,7 @@ namespace jowi::process {
      * @param h Coroutine handle that will resume after waiting.
      */
     std::coroutine_handle<void> await_suspend(std::coroutine_handle<void> h) {
-      while (__tp >= std::chrono::system_clock::now() && !await_ready()) {
+      while (!await_ready()) {
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
       }
       return h;

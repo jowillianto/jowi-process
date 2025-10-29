@@ -168,7 +168,7 @@ JOWI_ADD_TEST(wait_non_blocking_is_non_blocking) {
   Async Tests
 */
 
-asio::basic_task<proc::subprocess_result> run_child_delay(uint16_t delay) {
+asio::unique_task<proc::subprocess_result> run_child_delay(uint16_t delay) {
   auto null_pipe =
     test_lib::assert_expected_value(io::open_options{}.read_write().open("/dev/null"));
   auto proc = test_lib::assert_expected_value(
@@ -179,7 +179,7 @@ asio::basic_task<proc::subprocess_result> run_child_delay(uint16_t delay) {
 
 JOWI_ADD_TEST(parallel_wait) {
   auto beg = std::chrono::system_clock::now();
-  auto [res1, res2] = asio::gather(run_child_delay(500), run_child_delay(500));
+  auto [res1, res2] = asio::parallel(run_child_delay(500), run_child_delay(500));
   auto end = std::chrono::system_clock::now();
   test_lib::assert_lt(
     std::chrono::duration_cast<std::chrono::milliseconds>(end - beg).count(), 550
