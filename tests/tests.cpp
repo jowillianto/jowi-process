@@ -168,7 +168,7 @@ JOWI_ADD_TEST(wait_non_blocking_is_non_blocking) {
   Async Tests
 */
 
-asio::unique_task<proc::subprocess_result> run_child_delay(uint16_t delay) {
+asio::basic_task<proc::subprocess_result> run_child_delay(uint16_t delay) {
   auto null_pipe =
     test_lib::assert_expected_value(io::open_options{}.read_write().open("/dev/null"));
   auto proc = test_lib::assert_expected_value(

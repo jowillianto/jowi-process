@@ -96,8 +96,8 @@ namespace jowi::process {
      * @brief Create an awaitable that resolves when the process completes.
      * @param check When true, non-zero exits surface as errors.
      */
-    process_wait async_wait(bool check = true) noexcept {
-      return process_wait{__p, check};
+    asio::infinite_awaiter<process_wait_poller> async_wait(bool check = true) noexcept {
+      return asio::infinite_awaiter<process_wait_poller>{__p, check};
     }
 
     /**
@@ -105,8 +105,10 @@ namespace jowi::process {
      * @param timeout Maximum duration to poll before yielding control.
      * @param check When true, non-zero exits surface as errors.
      */
-    process_wait_for async_wait_for(std::chrono::milliseconds timeout, bool check = true) noexcept {
-      return process_wait_for{__p, timeout, check};
+    asio::timed_awaiter<process_wait_poller> async_wait_for(
+      std::chrono::milliseconds timeout, bool check = true
+    ) noexcept {
+      return asio::timed_awaiter<process_wait_poller>{timeout, __p, check};
     }
     /**
      * @brief Send a signal to the process and return a reference to this wrapper.
@@ -274,7 +276,7 @@ namespace jowi::process {
      * @param err Optional file descriptor duplicated to the child stderr stream.
      * @param e Environment definition to expose to the child process.
      */
-    static asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
+    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
       const subprocess_argument &args,
       bool check = true,
       std::optional<int> out = STDOUT_FILENO,
@@ -299,7 +301,7 @@ namespace jowi::process {
      * @param err Optional file descriptor duplicated to the child stderr stream.
      * @param e Environment definition to expose to the child process.
      */
-    static asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+    static asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
       const subprocess_argument &args,
       bool check = true,
       std::chrono::milliseconds timeout = std::chrono::seconds{10},
@@ -314,7 +316,7 @@ namespace jowi::process {
       }
       auto res = co_await proc->async_wait_for(timeout, check);
       if (!res) {
-        co_return std::unexpected{res.error()};
+        co_return std::unexpected{res->error()};
       } else if (res->has_value()) {
         co_return res->value();
       }
@@ -389,7 +391,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
     const subprocess_argument &args,
     bool check = true,
     std::optional<int> out = STDOUT_FILENO,
@@ -409,7 +411,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
     const subprocess_argument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
@@ -497,7 +499,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_run(
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_run(
     const subprocess_argument &args,
     bool check = true,
     const io::is_file auto &out = io::basic_file<int>{STDOUT_FILENO},
@@ -520,7 +522,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
-  export asio::unique_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
+  export asio::basic_task<std::expected<subprocess_result, subprocess_error>> async_timed_run(
     const subprocess_argument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
