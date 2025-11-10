@@ -6,7 +6,7 @@ namespace jowi::process {
   /**
    * @brief Captures the raw status returned by `waitpid` and exposes helper queries.
    */
-  export class subprocess_result {
+  export class SubprocessResult {
     int _status;
 
   public:
@@ -14,7 +14,7 @@ namespace jowi::process {
      * @brief Construct the result wrapper from a POSIX wait status value.
      * @param status Raw status supplied by `waitpid` or similar calls.
      */
-    subprocess_result(int status) : _status{status} {}
+    SubprocessResult(int status) : _status{status} {}
     /**
      * @brief Check whether the process exited normally via `exit` or `return`.
      */

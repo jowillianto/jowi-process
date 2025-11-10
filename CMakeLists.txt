@@ -7,23 +7,23 @@ set (CMAKE_CXX_SCAN_FOR_MODULES true)
 option (JOWI_PROCESS_BUILD_TESTS "Build tests" OFF)
 
 if (NOT TARGET jowi::generic)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-generic)
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-generic)
 endif()
 
 if (NOT TARGET jowi::io)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-io)
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-io)
 endif()
 
 if (NOT TARGET jowi::asio)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
 endif()
 
 add_library(${PROJECT_NAME})
 add_library(jowi::process ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME}
-  PUBLIC 
-    FILE_SET CXX_MODULES 
-    FILES 
+  PUBLIC
+    FILE_SET CXX_MODULES
+    FILES
       ${CMAKE_CURRENT_LIST_DIR}/src/main.cc
       ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_argument.cc
       ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_env.cc
@@ -42,45 +42,45 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 if (JOWI_PROCESS_BUILD_TESTS)
-  include(CTest)
-  if (NOT TARGET jowi::test_lib)
-    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/test-lib)
-  endif()
-  add_executable(process_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
-  target_link_libraries(process_child PRIVATE jowi::process)
-  jowi_add_test(test_jowi_test 
-    ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
-    LIBRARIES ${PROJECT_NAME} jowi::io
-    COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
-    SANITIZERS all
-  )
+    include(CTest)
+    if (NOT TARGET jowi::test_lib)
+        add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/test-lib)
+    endif()
+    add_executable(process_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
+    target_link_libraries(process_child PRIVATE jowi::process)
+    jowi_add_test(test_jowi_process_basic
+        ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
+        LIBRARIES ${PROJECT_NAME} jowi::io
+        COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
+        SANITIZERS all
+    )
 endif()
 
 if (JOWI_INSTALL)
-  include(GNUInstallDirs)
-  set (JOWI_COMPONENT_NAME "process")
-  set_property(
-    TARGET ${PROJECT_NAME} 
+    include(GNUInstallDirs)
+    set (JOWI_COMPONENT_NAME "process")
+    set_property(
+    TARGET ${PROJECT_NAME}
     PROPERTY EXPORT_NAME ${JOWI_COMPONENT_NAME}
   )
-  install (
+    install (
     TARGETS ${PROJECT_NAME}
     EXPORT jowi
-    FILE_SET 
-      CXX_MODULES 
+    FILE_SET
+      CXX_MODULES
       DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/jowi/${JOWI_COMPONENT_NAME}
       COMPONENT ${JOWI_COMPONENT_NAME}_file_set
-    CXX_MODULES_BMI 
+    CXX_MODULES_BMI
       COMPONENT ${JOWI_COMPONENT_NAME}
       DESTINATION ${CMAKE_INSTALL_PREFIX}/cxx_modules/jowi/${JOWI_COMPONENT_NAME}
   )
-  if (NOT JOWI_GLOBAL_INSTALL)
-    install (
+    if (NOT JOWI_GLOBAL_INSTALL)
+        install (
       EXPORT jowi
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/jowi
       FILE jowi-config.cmake
       NAMESPACE jowi::
       CXX_MODULES_DIRECTORY cxx_modules/jowi
     )
-  endif()
+    endif()
 endif()

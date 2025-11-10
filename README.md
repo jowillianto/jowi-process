@@ -131,9 +131,9 @@ int main(int, const char **, const char **envp) {
   auto result = proc::run(
     proc::subprocess_argument{"printenv", "MY_FLAG"},
     true,
-    io::basic_file<int>{1},  // forward child stdout to parent stdout
-    io::basic_file<int>{0},  // use parent stdin
-    io::basic_file<int>{2},  // use parent stderr
+    io::BasicFile<int>{1},  // forward child stdout to parent stdout
+    io::BasicFile<int>{0},  // use parent stdin
+    io::BasicFile<int>{2},  // use parent stderr
     env
   );
   if (!result) {

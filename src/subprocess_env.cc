@@ -12,27 +12,27 @@ namespace jowi::process {
   /**
    * @brief Describes a single environment variable entry split into name and value.
    */
-  export struct env_entry {
+  export struct EnvEntry {
     std::string_view name;
     std::string_view value;
 
     /**
-     * @brief Parse a `NAME=VALUE` string into an `env_entry` view.
+     * @brief Parse a `NAME=VALUE` string into an `EnvEntry` view.
      * @param v Environment string to split.
      */
-    static env_entry make(std::string_view v) {
+    static EnvEntry make(std::string_view v) {
       auto eq_pos = std::ranges::find(v, '=');
-      return env_entry{std::string_view{v.begin(), eq_pos}, std::string_view{eq_pos + 1, v.end()}};
+      return EnvEntry{std::string_view{v.begin(), eq_pos}, std::string_view{eq_pos + 1, v.end()}};
     }
   };
   /**
    * @brief Manages the environment variables supplied to spawned subprocesses.
    */
-  export class subprocess_env {
+  export class SubprocessEnv {
     /**
      * @brief Stores the process-wide environment snapshot configured during initialization.
      */
-    static subprocess_env __global_env;
+    static SubprocessEnv __global_env;
     std::vector<std::string> __env;
     mutable std::optional<std::vector<const char *>> __parsed_env;
 
@@ -56,7 +56,7 @@ namespace jowi::process {
      */
     std::optional<std::reference_wrapper<std::string>> __get(std::string_view name) noexcept {
       auto it = std::ranges::find_if(__env, [&](const std::string &v) {
-        return env_entry::make(v).name == name;
+        return EnvEntry::make(v).name == name;
       });
       if (it == __env.end()) {
         return std::nullopt;
@@ -69,14 +69,14 @@ namespace jowi::process {
     /**
      * @brief Creates an empty environment configuration.
      */
-    subprocess_env() : __env{}, __parsed_env{std::nullopt} {}
+    SubprocessEnv() : __env{}, __parsed_env{std::nullopt} {}
 
     /**
      * @brief Set or update an environment variable value (does not modify the host environment).
      * @param name Environment variable to set.
      * @param value Value to assign to the variable.
      */
-    subprocess_env &set(std::string_view name, std::string_view value) {
+    SubprocessEnv &set(std::string_view name, std::string_view value) {
       return __get(name)
         .transform([&](std::string &v) {
           v = std::format("{}={}", name, value);
@@ -93,9 +93,9 @@ namespace jowi::process {
      * @brief Retrieve an environment entry if it exists in this configuration.
      * @param name Environment variable to read.
      */
-    std::optional<env_entry> get(std::string_view name) const noexcept {
+    std::optional<EnvEntry> get(std::string_view name) const noexcept {
       for (const auto &env_string : __env) {
-        auto entry = env_entry::make(env_string);
+        auto entry = EnvEntry::make(env_string);
         if (entry.name == name) {
           return entry;
         }
@@ -131,18 +131,18 @@ namespace jowi::process {
      * @brief Create an environment either referencing the global snapshot or starting empty.
      * @param include_current When true, copy the global environment.
      */
-    static subprocess_env make_env(bool include_current = true) {
+    static SubprocessEnv make_env(bool include_current = true) {
       if (include_current) {
         return __global_env;
       } else {
-        return subprocess_env{};
+        return SubprocessEnv{};
       }
     }
 
     /**
      * @brief Access the global environment snapshot.
      */
-    static const subprocess_env &global_env() {
+    static const SubprocessEnv &global_env() {
       return __global_env;
     }
   };
@@ -150,5 +150,5 @@ namespace jowi::process {
   /**
    * @brief Default initialize the global environment object.
    */
-  subprocess_env subprocess_env::__global_env{};
+  SubprocessEnv SubprocessEnv::__global_env{};
 }

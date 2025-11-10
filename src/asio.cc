@@ -8,16 +8,16 @@ import :subprocess_result;
 import :unique_pid;
 
 namespace jowi::process {
-  struct process_wait_poller {
+  struct ProcessWaitPoller {
   private:
-    unique_pid &__p;
+    UniquePid &__p;
     bool __check;
 
   public:
-    using value_type = std::expected<subprocess_result, subprocess_error>;
-    process_wait_poller(unique_pid &p, bool check = true) : __p{p}, __check{check} {}
+    using ValueType = std::expected<SubprocessResult, SubprocessError>;
+    ProcessWaitPoller(UniquePid &p, bool check = true) : __p{p}, __check{check} {}
 
-    std::optional<value_type> poll() {
+    std::optional<ValueType> poll() {
       auto res = __p.wait_non_blocking(__check);
       if (!res) {
         return std::unexpected{res.error()};
@@ -28,7 +28,7 @@ namespace jowi::process {
       return std::nullopt;
     }
 
-    value_type poll_block() {
+    ValueType poll_block() {
       return __p.wait(__check);
     }
   };

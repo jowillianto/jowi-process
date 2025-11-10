@@ -9,7 +9,7 @@ namespace jowi::process {
   /**
    * @brief Builds an argv-style command line for spawning subprocesses.
    */
-  export class subprocess_argument {
+  export class SubprocessArgument {
     std::string __exec;
     std::vector<std::string> __args;
     mutable std::vector<const char *> __converted;
@@ -22,7 +22,7 @@ namespace jowi::process {
      */
     template <typename... Args>
       requires(std::is_constructible_v<std::string, Args> && ...)
-    subprocess_argument(std::string exec, Args &&...args) : __exec{exec} {
+    SubprocessArgument(std::string exec, Args &&...args) : __exec{exec} {
       __args.reserve(sizeof...(Args));
       (__args.emplace_back(std::string{std::forward<Args>(args)}), ...);
     }
@@ -33,7 +33,7 @@ namespace jowi::process {
      */
     template <typename... Args>
       requires(std::is_constructible_v<std::string, Args> && ...)
-    subprocess_argument &add_argument(Args &&...args) {
+    SubprocessArgument &add_argument(Args &&...args) {
       (__args.emplace_back(std::string{std::forward<Args>(args)}), ...);
       return *this;
     }
@@ -43,7 +43,7 @@ namespace jowi::process {
      */
     template <std::ranges::range range_type>
       requires(std::is_constructible_v<std::string, std::ranges::range_value_t<range_type>>)
-    subprocess_argument &add_argument(range_type &&range) {
+    SubprocessArgument &add_argument(range_type &&range) {
       for (const auto &value : range) {
         __args.emplace_back(std::string{value});
       }
@@ -87,7 +87,7 @@ namespace proc = jowi::process;
 /**
  * @brief Formatter to print subprocess arguments using `std::format`.
  */
-template <class char_type> struct std::formatter<proc::subprocess_argument, char_type> {
+template <class char_type> struct std::formatter<proc::SubprocessArgument, char_type> {
   /**
    * @brief Accept the default formatter behaviour.
    * @param ctx Parsing context provided by the formatter.
@@ -100,7 +100,7 @@ template <class char_type> struct std::formatter<proc::subprocess_argument, char
    * @param args Argument builder to serialise.
    * @param ctx Formatting context receiving the output.
    */
-  constexpr auto format(const proc::subprocess_argument &args, auto &ctx) const {
+  constexpr auto format(const proc::SubprocessArgument &args, auto &ctx) const {
     std::format_to(ctx.out(), "{} ", args.exec());
     for (const auto &command : args) {
       std::format_to(ctx.out(), "{} ", command);

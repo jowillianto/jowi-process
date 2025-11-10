@@ -12,19 +12,19 @@ import :subprocess_result;
 
 namespace jowi::process {
   /**
-   * @brief Invoke a POSIX call and return errno failures as `subprocess_error`.
+   * @brief Invoke a POSIX call and return errno failures as `SubprocessError`.
    * @param f Callable object invoking the POSIX API.
    * @param args Arguments forwarded to the callable.
    */
   template <class F, class... Args>
     requires(std::invocable<F, Args...>)
-  std::expected<std::invoke_result_t<F, Args...>, subprocess_error> sys_call(
+  std::expected<std::invoke_result_t<F, Args...>, SubprocessError> sys_call(
     F &&f, Args &&...args
   ) {
     int res = std::invoke(std::forward<F>(f), std::forward<Args>(args)...);
     int err_no = errno;
     if (res == -1) {
-      return std::unexpected{subprocess_error::from_errcode(err_no)};
+      return std::unexpected{SubprocessError::from_errcode(err_no)};
     }
     return res;
   }
@@ -36,12 +36,12 @@ namespace jowi::process {
    */
   template <class F, class... Args>
     requires(std::invocable<F, Args...>)
-  std::expected<std::invoke_result_t<F, Args...>, subprocess_error> sys_call_return_err(
+  std::expected<std::invoke_result_t<F, Args...>, SubprocessError> sys_call_return_err(
     F &&f, Args &&...args
   ) {
     int res = std::invoke(std::forward<F>(f), std::forward<Args>(args)...);
     if (res != 0) {
-      return std::unexpected{subprocess_error::from_errcode(res)};
+      return std::unexpected{SubprocessError::from_errcode(res)};
     }
     return res;
   }
@@ -49,7 +49,7 @@ namespace jowi::process {
   /**
    * @brief RAII owner for a process identifier with wait and signalling helpers.
    */
-  export struct unique_pid {
+  export struct UniquePid {
   private:
     pid_t __pid;
 
@@ -68,27 +68,27 @@ namespace jowi::process {
      * @brief Adopt a POSIX process identifier.
      * @param pid Newly spawned process identifier to manage.
      */
-    explicit unique_pid(pid_t pid) : __pid{pid} {}
+    explicit UniquePid(pid_t pid) : __pid{pid} {}
     /**
-     * @brief Transfer ownership from another `unique_pid`.
+     * @brief Transfer ownership from another `UniquePid`.
      * @param p Source PID wrapper losing ownership.
      */
-    unique_pid(unique_pid &&p) : __pid{p.__pid} {
+    UniquePid(UniquePid &&p) : __pid{p.__pid} {
       p.__pid = -1;
     }
     /**
      * @brief Copy construction is disabled because PID ownership cannot be duplicated.
      */
-    unique_pid(const unique_pid &) = delete;
+    UniquePid(const UniquePid &) = delete;
     /**
      * @brief Copy assignment is disabled because PID ownership cannot be duplicated.
      */
-    unique_pid &operator=(const unique_pid &) = delete;
+    UniquePid &operator=(const UniquePid &) = delete;
     /**
      * @brief Move-assign, releasing any currently owned process.
      * @param p Source PID wrapper losing ownership.
      */
-    unique_pid &operator=(unique_pid &&p) {
+    UniquePid &operator=(UniquePid &&p) {
       __destroy();
       __pid = p.__pid;
       p.__pid = -1;
@@ -99,28 +99,28 @@ namespace jowi::process {
      * @brief Block until the process terminates and optionally validate the exit code.
      * @param check When true, non-zero exits surface as errors.
      */
-    std::expected<subprocess_result, subprocess_error> wait(bool check = true) noexcept {
+    std::expected<SubprocessResult, SubprocessError> wait(bool check = true) noexcept {
       int status = 0;
       return sys_call(waitpid, __pid, &status, 0).and_then([&](int) {
         __pid = -1;
-        return subprocess_error::check_status(status, check);
+        return SubprocessError::check_status(status, check);
       });
     }
     /**
      * @brief Poll the process without blocking and return completion if available.
      * @param check When true, non-zero exits surface as errors.
      */
-    std::expected<std::optional<subprocess_result>, subprocess_error> wait_non_blocking(
+    std::expected<std::optional<SubprocessResult>, SubprocessError> wait_non_blocking(
       bool check
     ) noexcept {
-      using expected_type = std::expected<std::optional<subprocess_result>, subprocess_error>;
+      using expected_type = std::expected<std::optional<SubprocessResult>, SubprocessError>;
       int status = 0;
       return sys_call(waitpid, __pid, &status, WNOHANG).and_then([&](int res) -> expected_type {
         if (res == 0) {
-          return expected_type{std::optional<subprocess_result>{std::nullopt}};
+          return expected_type{std::optional<SubprocessResult>{std::nullopt}};
         } else {
           __pid = -1;
-          return subprocess_error::check_status(status, check);
+          return SubprocessError::check_status(status, check);
         }
       });
     }
@@ -128,7 +128,7 @@ namespace jowi::process {
      * @brief Send a signal to the process while keeping the wrapper const.
      * @param sig Signal number to deliver.
      */
-    std::expected<std::reference_wrapper<const unique_pid>, subprocess_error> send_signal(
+    std::expected<std::reference_wrapper<const UniquePid>, SubprocessError> send_signal(
       int sig
     ) const noexcept {
       return sys_call(kill, __pid, sig).transform([&](int res) { return std::ref(*this); });
@@ -137,7 +137,7 @@ namespace jowi::process {
      * @brief Send a signal to the process.
      * @param sig Signal number to deliver.
      */
-    std::expected<std::reference_wrapper<unique_pid>, subprocess_error> send_signal(
+    std::expected<std::reference_wrapper<UniquePid>, SubprocessError> send_signal(
       int sig
     ) noexcept {
       return sys_call(kill, __pid, sig).transform([&](int res) { return std::ref(*this); });
@@ -153,7 +153,7 @@ namespace jowi::process {
     /**
      * @brief Ensure the process is cleaned up when the owner goes out of scope.
      */
-    ~unique_pid() noexcept {
+    ~UniquePid() noexcept {
       __destroy();
     }
   };

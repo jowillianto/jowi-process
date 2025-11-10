@@ -11,7 +11,7 @@ namespace proc = jowi::process;
 
 int main(int argc, char **argv, char **envp) {
   auto beg = std::chrono::steady_clock::now();
-  proc::subprocess_env::init(const_cast<const char **>(envp));
+  proc::SubprocessEnv::init(const_cast<const char **>(envp));
   if (argc < 2) {
     std::cerr << "At least one argument have to be given" << std::endl;
     return 1;
@@ -36,7 +36,7 @@ int main(int argc, char **argv, char **envp) {
     return 0;
   }
   if (action == "env") {
-    if (auto entry = proc::subprocess_env::global_env().get(param); entry) {
+    if (auto entry = proc::SubprocessEnv::global_env().get(param); entry) {
       std::cout << entry->value << std::endl;
       return 0;
     }
