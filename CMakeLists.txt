@@ -10,13 +10,14 @@ if (NOT TARGET jowi::generic)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-generic)
 endif()
 
+if (NOT TARGET jowi::asio)
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
+endif()
+
 if (NOT TARGET jowi::io)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-io)
 endif()
 
-if (NOT TARGET jowi::asio)
-    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
-endif()
 
 add_library(${PROJECT_NAME})
 add_library(jowi::process ALIAS ${PROJECT_NAME})

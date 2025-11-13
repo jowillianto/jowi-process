@@ -15,8 +15,11 @@ namespace io = jowi::io;
 namespace proc = jowi::process;
 namespace asio = jowi::asio;
 
+std::optional<io::LocalFile> null_file;
+
 JOWI_SETUP(argc, argv) {
   test_lib::get_test_context().set_time_unit(test_lib::TestTimeUnit::MILLI_SECONDS);
+  null_file = test_lib::assert_expected_value(io::OpenOptions{}.read_write().open("/dev/null"));
 }
 
 JOWI_ADD_TEST(spawn_returns_process_handle) {
@@ -24,10 +27,7 @@ JOWI_ADD_TEST(spawn_returns_process_handle) {
   auto [stdout_reader, stdout_writer] = test_lib::assert_expected_value(io::open_pipe());
   auto process = test_lib::assert_expected_value(
     proc::spawn(
-      proc::SubprocessArgument{TEST_CHILD_EXEC, random_str},
-      stdout_writer,
-      io::BasicFile<int>{0},
-      io::BasicFile<int>{2}
+      proc::SubprocessArgument{TEST_CHILD_EXEC, random_str}, stdout_writer, *null_file, *null_file
     )
   );
   {
@@ -35,29 +35,23 @@ JOWI_ADD_TEST(spawn_returns_process_handle) {
   }
   auto result = test_lib::assert_expected_value(process.wait());
   test_lib::assert_equal(result.exit_code(), 0);
-  io::ByteReader stdout_reader_bytes{io::FixedBuffer<2048>{}, std::move(stdout_reader)};
-  auto stdout_content = test_lib::assert_expected_value(stdout_reader_bytes.read());
-  test_lib::assert_equal(stdout_content, random_str + "\n");
+  auto buf = io::DynBuffer{2048};
+  test_lib::assert_expected_value(stdout_reader.read(buf));
+  test_lib::assert_equal(buf.read(), random_str + "\n");
 }
 
 JOWI_ADD_TEST(execute_test_normal_exit) {
-  auto null_writer = test_lib::assert_expected_value(io::OpenOptions{}.write().open("/dev/null"));
-  auto null_reader = test_lib::assert_expected_value(io::OpenOptions{}.read().open("/dev/null"));
   auto result = test_lib::assert_expected_value(
     proc::run(
-      proc::SubprocessArgument{TEST_CHILD_EXEC, "arg1"}, true, null_writer, null_reader, null_writer
+      proc::SubprocessArgument{TEST_CHILD_EXEC, "arg1"}, true, *null_file, *null_file, *null_file
     )
   );
   test_lib::assert_equal(result.exit_code(), 0);
 }
 
 JOWI_ADD_TEST(execute_test_abnormal_exit) {
-  auto null_writer = test_lib::assert_expected_value(io::OpenOptions{}.write().open("/dev/null"));
-  auto null_reader = test_lib::assert_expected_value(io::OpenOptions{}.read().open("/dev/null"));
   auto result = test_lib::assert_expected_value(
-    proc::run(
-      proc::SubprocessArgument{TEST_CHILD_EXEC}, false, null_writer, null_reader, null_writer
-    )
+    proc::run(proc::SubprocessArgument{TEST_CHILD_EXEC}, false, *null_file, *null_file, *null_file)
   );
   test_lib::assert_equal(result.exit_code(), 1);
 }
@@ -67,20 +61,16 @@ JOWI_ADD_TEST(execute_pipe) {
   auto [reader, writer] = test_lib::assert_expected_value(io::open_pipe());
   auto result = test_lib::assert_expected_value(
     proc::run(
-      proc::SubprocessArgument{TEST_CHILD_EXEC, random_str},
-      true,
-      writer,
-      io::BasicFile<int>{1},
-      io::BasicFile<int>{2}
+      proc::SubprocessArgument{TEST_CHILD_EXEC, random_str}, true, writer, *null_file, *null_file
     )
   );
   {
     auto _ = std::move(writer);
   } // close writer
   test_lib::assert_equal(result.exit_code(), 0);
-  io::ByteReader pipe_reader{io::FixedBuffer<2048>{}, std::move(reader)};
-  auto reader_content = test_lib::assert_expected_value(pipe_reader.read());
-  test_lib::assert_equal(reader_content, random_str + "\n");
+  auto buf = io::DynBuffer{2048};
+  test_lib::assert_expected_value(reader.read(buf));
+  test_lib::assert_equal(buf.read(), random_str + "\n");
 }
 
 JOWI_ADD_TEST(stdin_stdout_piped_correctly) {
@@ -92,7 +82,7 @@ JOWI_ADD_TEST(stdin_stdout_piped_correctly) {
       proc::SubprocessArgument{TEST_CHILD_EXEC, "echo_stdin", ""},
       stdout_writer,
       stdin_reader,
-      io::BasicFile<int>{2}
+      *null_file
     )
   );
   {
@@ -107,9 +97,9 @@ JOWI_ADD_TEST(stdin_stdout_piped_correctly) {
   }
   auto wait_result = test_lib::assert_expected_value(process.wait());
   test_lib::assert_equal(wait_result.exit_code(), 0);
-  io::ByteReader stdout_pipe_reader{io::FixedBuffer<2048>{}, std::move(stdout_reader)};
-  auto stdout_payload = test_lib::assert_expected_value(stdout_pipe_reader.read());
-  test_lib::assert_equal(stdout_payload, payload + "\n");
+  auto buf = io::DynBuffer{2048};
+  test_lib::assert_expected_value(stdout_reader.read(buf));
+  test_lib::assert_equal(buf.read(), payload + "\n");
 }
 
 JOWI_ADD_TEST(environment_variable_forwarded_to_child) {
@@ -123,8 +113,8 @@ JOWI_ADD_TEST(environment_variable_forwarded_to_child) {
       proc::SubprocessArgument{TEST_CHILD_EXEC, "env", std::string{key}},
       true,
       stdout_writer,
-      io::BasicFile<int>{0},
-      io::BasicFile<int>{2},
+      *null_file,
+      *null_file,
       env
     )
   );
@@ -132,15 +122,20 @@ JOWI_ADD_TEST(environment_variable_forwarded_to_child) {
     auto _ = std::move(stdout_writer);
   }
   test_lib::assert_equal(result.exit_code(), 0);
-  io::ByteReader env_reader_bytes{io::FixedBuffer<2048>{}, std::move(stdout_reader)};
-  auto env_output = test_lib::assert_expected_value(env_reader_bytes.read());
-  test_lib::assert_equal(env_output, value + "\n");
+  auto buf = io::DynBuffer{2048};
+  test_lib::assert_expected_value(stdout_reader.read(buf));
+  test_lib::assert_equal(buf.read(), value + "\n");
 }
 
 JOWI_ADD_TEST(execute_kill) {
   auto delay_time = std::to_string(test_lib::random_integer(1000, 5000));
   auto process = test_lib::assert_expected_value(
-    proc::spawn(proc::SubprocessArgument{TEST_CHILD_EXEC, "delay", delay_time})
+    proc::spawn(
+      proc::SubprocessArgument{TEST_CHILD_EXEC, "delay", delay_time},
+      *null_file,
+      *null_file,
+      *null_file
+    )
   );
   test_lib::assert_equal(process.kill().has_value(), true);
   auto result = test_lib::assert_expected_value(process.wait(false));
@@ -148,11 +143,9 @@ JOWI_ADD_TEST(execute_kill) {
 }
 
 JOWI_ADD_TEST(wait_non_blocking_is_non_blocking) {
-  auto null_pipe =
-    test_lib::assert_expected_value(io::OpenOptions{}.read_write().open("/dev/null"));
   auto process = test_lib::assert_expected_value(
     proc::spawn(
-      proc::SubprocessArgument(TEST_CHILD_EXEC, "delay", "1000"), null_pipe, null_pipe, null_pipe
+      proc::SubprocessArgument(TEST_CHILD_EXEC, "delay", "1000"), *null_file, *null_file, *null_file
     )
   );
   test_lib::assert_equal(process.wait_non_blocking()->has_value(), false);
@@ -165,10 +158,10 @@ JOWI_ADD_TEST(wait_non_blocking_is_non_blocking) {
 */
 
 asio::BasicTask<proc::SubprocessResult> run_child_delay(uint16_t delay) {
-  auto null_pipe =
-    test_lib::assert_expected_value(io::OpenOptions{}.read_write().open("/dev/null"));
   auto proc = test_lib::assert_expected_value(
-    proc::spawn({TEST_CHILD_EXEC, "delay", std::to_string(delay)}, null_pipe, null_pipe, null_pipe)
+    proc::spawn(
+      {TEST_CHILD_EXEC, "delay", std::to_string(delay)}, *null_file, *null_file, *null_file
+    )
   );
   co_return test_lib::assert_expected_value(co_await proc.async_wait());
 }

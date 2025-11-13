@@ -18,9 +18,7 @@ namespace jowi::process {
    */
   template <class F, class... Args>
     requires(std::invocable<F, Args...>)
-  std::expected<std::invoke_result_t<F, Args...>, SubprocessError> sys_call(
-    F &&f, Args &&...args
-  ) {
+  std::expected<std::invoke_result_t<F, Args...>, SubprocessError> sys_call(F &&f, Args &&...args) {
     int res = std::invoke(std::forward<F>(f), std::forward<Args>(args)...);
     int err_no = errno;
     if (res == -1) {
@@ -35,7 +33,7 @@ namespace jowi::process {
    * @param args Arguments forwarded to the callable.
    */
   template <class F, class... Args>
-    requires(std::invocable<F, Args...>)
+    requires(std::is_invocable_r_v<int, F, Args...>)
   std::expected<std::invoke_result_t<F, Args...>, SubprocessError> sys_call_return_err(
     F &&f, Args &&...args
   ) {
@@ -44,6 +42,21 @@ namespace jowi::process {
       return std::unexpected{SubprocessError::from_errcode(res)};
     }
     return res;
+  }
+
+  /**
+   * @brief Invoke a POSIX call that returns errno directly and map failures.
+   * @param f Callable object invoking the POSIX API.
+   * @param args Arguments forwarded to the callable.
+   */
+  template <class F, class... Args>
+    requires(std::is_invocable_r_v<int, F, Args...>)
+  std::expected<void, SubprocessError> sys_call_return_err_void(F &&f, Args &&...args) {
+    int res = std::invoke(std::forward<F>(f), std::forward<Args>(args)...);
+    if (res != 0) {
+      return std::unexpected{SubprocessError::from_errcode(res)};
+    }
+    return {};
   }
 
   /**

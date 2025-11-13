@@ -22,13 +22,22 @@ export import :unique_pid;
 export import :asio;
 
 namespace jowi::process {
-  std::optional<int> as_optional_fd(const io::IsFile auto &file) noexcept {
-    auto fd = file.handle().fd();
-    if (fd == -1) {
-      return std::nullopt;
+  struct SubprocessSpawnActionDuper {
+    std::optional<int> source_fd;
+    posix_spawn_file_actions_t &spawn_action;
+    int target_fd;
+
+    std::expected<void, SubprocessError> operator()() {
+      int raw_source_fd = source_fd.value_or(-1);
+      if (raw_source_fd == -1) {
+        return {};
+      }
+      auto res = sys_call_return_err_void(
+        posix_spawn_file_actions_adddup2, &spawn_action, raw_source_fd, target_fd
+      );
+      return res;
     }
-    return fd;
-  }
+  };
   /**
    * @brief RAII wrapper around a spawned POSIX process with synchronous and async utilities.
    */
@@ -170,45 +179,21 @@ namespace jowi::process {
      */
     static std::expected<Subprocess, SubprocessError> spawn(
       const SubprocessArgument &args,
-      std::optional<int> out = STDOUT_FILENO,
+      std::optional<int> out = std::nullopt,
       std::optional<int> in = std::nullopt,
-      std::optional<int> err = STDERR_FILENO,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &env = SubprocessEnv::global_env()
     ) {
       posix_spawn_file_actions_t spawn_action;
       posix_spawnattr_t attributes;
       pid_t pid;
-      return sys_call_return_err(posix_spawn_file_actions_init, &spawn_action)
-        .and_then([&](auto &&) {
-          return out
-            .transform([&](int out) {
-              return sys_call_return_err(
-                posix_spawn_file_actions_adddup2, &spawn_action, out, STDOUT_FILENO
-              );
-            })
-            .value_or(0);
-        })
-        .and_then([&](auto &&) {
-          return in
-            .transform([&](int in) {
-              return sys_call_return_err(
-                posix_spawn_file_actions_adddup2, &spawn_action, in, STDIN_FILENO
-              );
-            })
-            .value_or(0);
-        })
-        .and_then([&](auto &&) {
-          return err
-            .transform([&](int out) {
-              return sys_call_return_err(
-                posix_spawn_file_actions_adddup2, &spawn_action, out, STDERR_FILENO
-              );
-            })
-            .value_or(0);
-        })
-        .and_then([&](auto &&) { return sys_call_return_err(posix_spawnattr_init, &attributes); })
-        .and_then([&](auto &&) {
-          return sys_call_return_err(
+      return sys_call_return_err_void(posix_spawn_file_actions_init, &spawn_action)
+        .and_then([&]() { return sys_call_return_err_void(posix_spawnattr_init, &attributes); })
+        .and_then(SubprocessSpawnActionDuper{out, spawn_action, STDOUT_FILENO})
+        .and_then(SubprocessSpawnActionDuper{in, spawn_action, STDIN_FILENO})
+        .and_then(SubprocessSpawnActionDuper{err, spawn_action, STDERR_FILENO})
+        .and_then([&]() {
+          return sys_call_return_err_void(
             posix_spawnp,
             &pid,
             args.exec(),
@@ -218,7 +203,7 @@ namespace jowi::process {
             const_cast<char *const *>(env.args())
           );
         })
-        .transform([&](auto &&) { return Subprocess{pid}; });
+        .transform([&]() { return Subprocess{pid}; });
     }
 
     /**
@@ -235,9 +220,9 @@ namespace jowi::process {
       const SubprocessArgument &args,
       bool check = true,
       std::chrono::milliseconds timeout = std::chrono::seconds{10},
-      std::optional<int> out = STDOUT_FILENO,
+      std::optional<int> out = std::nullopt,
       std::optional<int> in = std::nullopt,
-      std::optional<int> err = STDERR_FILENO,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &e = SubprocessEnv::make_env()
     ) {
       return spawn(args, out, in, err, e).and_then([&](Subprocess &&proc) {
@@ -257,9 +242,9 @@ namespace jowi::process {
     static std::expected<SubprocessResult, SubprocessError> run(
       const SubprocessArgument &args,
       bool check = true,
-      std::optional<int> out = STDOUT_FILENO,
+      std::optional<int> out = std::nullopt,
       std::optional<int> in = std::nullopt,
-      std::optional<int> err = STDERR_FILENO,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &e = SubprocessEnv::make_env()
     ) {
       return spawn(args, out, in, err, e).and_then([&](Subprocess &&proc) {
@@ -279,9 +264,9 @@ namespace jowi::process {
     static asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
       const SubprocessArgument &args,
       bool check = true,
-      std::optional<int> out = STDOUT_FILENO,
+      std::optional<int> out = std::nullopt,
       std::optional<int> in = std::nullopt,
-      std::optional<int> err = STDERR_FILENO,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &e = SubprocessEnv::make_env()
     ) {
       auto proc = spawn(args, out, in, err, e);
@@ -305,9 +290,9 @@ namespace jowi::process {
       const SubprocessArgument &args,
       bool check = true,
       std::chrono::milliseconds timeout = std::chrono::seconds{10},
-      std::optional<int> out = STDOUT_FILENO,
+      std::optional<int> out = std::nullopt,
       std::optional<int> in = std::nullopt,
-      std::optional<int> err = STDERR_FILENO,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &e = SubprocessEnv::make_env()
     ) {
       auto proc = spawn(args, out, in, err, e);
@@ -334,9 +319,9 @@ namespace jowi::process {
    */
   export std::expected<Subprocess, SubprocessError> spawn(
     const SubprocessArgument &args,
-    std::optional<int> out = STDOUT_FILENO,
+    std::optional<int> out = std::nullopt,
     std::optional<int> in = std::nullopt,
-    std::optional<int> err = STDERR_FILENO,
+    std::optional<int> err = std::nullopt,
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::spawn(args, out, in, err, env);
@@ -354,9 +339,9 @@ namespace jowi::process {
   export std::expected<SubprocessResult, SubprocessError> run(
     const SubprocessArgument &args,
     bool check = true,
-    std::optional<int> out = STDOUT_FILENO,
+    std::optional<int> out = std::nullopt,
     std::optional<int> in = std::nullopt,
-    std::optional<int> err = STDERR_FILENO,
+    std::optional<int> err = std::nullopt,
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::run(args, check, out, in, err, env);
@@ -375,9 +360,9 @@ namespace jowi::process {
     const SubprocessArgument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
-    std::optional<int> out = STDOUT_FILENO,
+    std::optional<int> out = std::nullopt,
     std::optional<int> in = std::nullopt,
-    std::optional<int> err = STDERR_FILENO,
+    std::optional<int> err = std::nullopt,
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::timed_run(args, check, timeout, out, in, err, env);
@@ -394,9 +379,9 @@ namespace jowi::process {
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
-    std::optional<int> out = STDOUT_FILENO,
+    std::optional<int> out = std::nullopt,
     std::optional<int> in = std::nullopt,
-    std::optional<int> err = STDERR_FILENO,
+    std::optional<int> err = std::nullopt,
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::async_run(args, check, out, in, err, env);
@@ -415,9 +400,9 @@ namespace jowi::process {
     const SubprocessArgument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
-    std::optional<int> out = STDOUT_FILENO,
+    std::optional<int> out = std::nullopt,
     std::optional<int> in = std::nullopt,
-    std::optional<int> err = STDERR_FILENO,
+    std::optional<int> err = std::nullopt,
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::async_timed_run(args, check, timeout, out, in, err, env);
@@ -433,13 +418,13 @@ namespace jowi::process {
    */
   export std::expected<Subprocess, SubprocessError> spawn(
     const SubprocessArgument &args,
-    const io::IsFile auto &out = io::BasicFile<int>{STDOUT_FILENO},
-    const io::IsFile auto &in = io::BasicFile<int>{-1},
-    const io::IsFile auto &err = io::BasicFile<int>{STDERR_FILENO},
+    const io::IsOsFile auto &out = io::BasicOsFile{-1},
+    const io::IsOsFile auto &in = io::BasicOsFile{-1},
+    const io::IsOsFile auto &err = io::BasicOsFile{-1},
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::spawn(
-      args, as_optional_fd(out), as_optional_fd(in), as_optional_fd(err), env
+      args, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
 
@@ -456,13 +441,13 @@ namespace jowi::process {
   export std::expected<SubprocessResult, SubprocessError> run(
     const SubprocessArgument &args,
     bool check = true,
-    const io::IsFile auto &out = io::BasicFile<int>{STDOUT_FILENO},
-    const io::IsFile auto &in = io::BasicFile<int>::invalid_file(),
-    const io::IsFile auto &err = io::BasicFile<int>{STDERR_FILENO},
+    const io::IsOsFile auto &out = io::BasicOsFile{-1},
+    const io::IsOsFile auto &in = io::BasicOsFile{-1},
+    const io::IsOsFile auto &err = io::BasicOsFile{-1},
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::run(
-      args, check, as_optional_fd(out), as_optional_fd(in), as_optional_fd(err), env
+      args, check, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
   /**
@@ -480,13 +465,13 @@ namespace jowi::process {
     const SubprocessArgument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
-    const io::IsFile auto &out = io::BasicFile<int>{STDOUT_FILENO},
-    const io::IsFile auto &in = io::BasicFile<int>::invalid_file(),
-    const io::IsFile auto &err = io::BasicFile<int>{STDERR_FILENO},
+    const io::IsOsFile auto &out = io::BasicOsFile{-1},
+    const io::IsOsFile auto &in = io::BasicOsFile{-1},
+    const io::IsOsFile auto &err = io::BasicOsFile{-1},
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::timed_run(
-      args, check, timeout, as_optional_fd(out), as_optional_fd(in), as_optional_fd(err), env
+      args, check, timeout, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
   /**
@@ -502,13 +487,13 @@ namespace jowi::process {
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
-    const io::IsFile auto &out = io::BasicFile<int>{STDOUT_FILENO},
-    const io::IsFile auto &in = io::BasicFile<int>::invalid_file(),
-    const io::IsFile auto &err = io::BasicFile<int>{STDERR_FILENO},
+    const io::IsOsFile auto &out = io::BasicOsFile{-1},
+    const io::IsOsFile auto &in = io::BasicOsFile{-1},
+    const io::IsOsFile auto &err = io::BasicOsFile{-1},
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::async_run(
-      args, check, as_optional_fd(out), as_optional_fd(in), as_optional_fd(err), env
+      args, check, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
   /**
@@ -526,13 +511,13 @@ namespace jowi::process {
     const SubprocessArgument &args,
     bool check = true,
     std::chrono::milliseconds timeout = std::chrono::seconds{10},
-    const io::IsFile auto &out = io::BasicFile<int>{STDOUT_FILENO},
-    const io::IsFile auto &in = io::BasicFile<int>::invalid_file(),
-    const io::IsFile auto &err = io::BasicFile<int>{STDERR_FILENO},
+    const io::IsOsFile auto &out = io::BasicOsFile{-1},
+    const io::IsOsFile auto &in = io::BasicOsFile{-1},
+    const io::IsOsFile auto &err = io::BasicOsFile{-1},
     const SubprocessEnv &env = SubprocessEnv::global_env()
   ) {
     return Subprocess::async_timed_run(
-      args, check, timeout, as_optional_fd(out), as_optional_fd(in), as_optional_fd(err), env
+      args, check, timeout, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
 
