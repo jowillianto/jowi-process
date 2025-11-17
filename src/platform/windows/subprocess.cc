@@ -1,26 +1,28 @@
 module;
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
-#include <windows.h>
+#include <cerrno>
 #include <chrono>
 #include <coroutine>
-#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <functional>
 #include <io.h>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <windows.h>
 export module jowi.process:subprocess;
 #ifdef JOWI_PROCESS_INTEGRATE_IO
 import jowi.io;
 #endif
 import jowi.asio;
+import jowi.generic;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
@@ -29,101 +31,66 @@ export import :unique_pid;
 export import :asio;
 
 namespace jowi::process {
-  namespace {
-    SubprocessError win32_last_error() {
-      DWORD err = GetLastError();
-      _dosmaperr(err);
-      return SubprocessError::from_errcode(errno);
-    }
-
-    std::string quote_argument(std::string_view arg) {
-      if (arg.empty()) {
-        return "\"\"";
-      }
-      bool needs_quotes = arg.find_first_of(" \t\"") != std::string_view::npos;
-      if (!needs_quotes) {
-        return std::string{arg};
-      }
-      std::string quoted;
-      quoted.reserve(arg.size() + 2);
-      quoted.push_back('"');
-      size_t backslashes = 0;
-      for (char c : arg) {
-        if (c == '\\') {
-          backslashes += 1;
-        } else if (c == '"') {
-          quoted.append(backslashes * 2 + 1, '\\');
-          quoted.push_back('"');
-          backslashes = 0;
-        } else {
-          if (backslashes) {
-            quoted.append(backslashes, '\\');
-            backslashes = 0;
-          }
-          quoted.push_back(c);
-        }
-      }
-      if (backslashes) {
-        quoted.append(backslashes * 2, '\\');
-      }
-      quoted.push_back('"');
-      return quoted;
-    }
-
-    std::string build_command_line(const SubprocessArgument &args) {
-      std::string command_line;
-      const char *const *argv = args.args();
-      if (!argv || !*argv) {
-        return command_line;
-      }
-      command_line = quote_argument(*argv);
-      for (auto current = argv + 1; *current != nullptr; ++current) {
-        command_line.push_back(' ');
-        command_line += quote_argument(*current);
-      }
-      return command_line;
-    }
-
-    std::vector<char> build_environment_block(const SubprocessEnv &env) {
-      std::vector<char> block;
-      const char *const *envp = env.args();
-      if (envp == nullptr) {
-        block.push_back('\0');
-        block.push_back('\0');
-        return block;
-      }
-      while (*envp != nullptr) {
-        auto value = *envp;
-        auto len = std::strlen(value);
-        block.insert(block.end(), value, value + len);
-        block.push_back('\0');
-        envp += 1;
-      }
-      if (block.empty()) {
-        block.push_back('\0');
-      }
-      block.push_back('\0');
-      return block;
-    }
-
-    std::expected<HANDLE, SubprocessError> fd_to_handle(int fd) {
-      intptr_t os_handle = _get_osfhandle(fd);
-      if (os_handle == -1) {
-        return std::unexpected{SubprocessError::from_errcode(errno)};
-      }
-      return reinterpret_cast<HANDLE>(os_handle);
-    }
-
-    struct HandleRestorer {
-      std::vector<HANDLE> handles;
-      ~HandleRestorer() {
-        for (HANDLE handle : handles) {
-          if (handle != INVALID_HANDLE_VALUE) {
-            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
-          }
-        }
+  std::string build_command_line(const SubprocessArgument &args) {
+    std::string command_line;
+    auto inserter = std::back_inserter(command_line);
+    auto format_token = [&](std::string_view value, bool last) {
+      if (last) {
+        std::format_to(inserter, "\"{}\"", value);
+      } else {
+        std::format_to(inserter, "\"{}\" ", value);
       }
     };
+    format_token(args.exec(), args.begin() == args.end());
+    for (auto it = args.begin(); it != args.end(); ++it) {
+      format_token(*it, std::next(it) == args.end());
+    }
+    return command_line;
+  }
+
+  std::vector<char> build_environment_block(const SubprocessEnv &env) {
+    std::vector<char> block;
+    for (auto it = env.begin(); it != env.end(); ++it) {
+      block.insert(block.end(), it->begin(), it->end());
+      block.push_back('\0');
+    }
+    if (env.begin() == env.end()) {
+      block.push_back('\0');
+    }
+    block.push_back('\0');
+    return block;
+  }
+
+  struct HandleInheritToggle {
+    void operator()(HANDLE handle) const {
+      SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+    }
+  };
+  std::expected<generic::UniqueHandle<HANDLE, HandleInheritToggle>, SubprocessError> inherit_handle(
+    HANDLE handle
+  ) {
+    DWORD flags = 0;
+    if (!GetHandleInformation(handle, &flags)) {
+      DWORD err = GetLastError();
+      _dosmaperr(err);
+      return std::unexpected{SubprocessError::from_errcode(errno)};
+    }
+    if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
+      DWORD err = GetLastError();
+      _dosmaperr(err);
+      return std::unexpected{SubprocessError::from_errcode(errno)};
+    }
+    return generic::UniqueHandle<HANDLE, HandleInheritToggle>::manage(
+      handle, HandleInheritToggle{}
+    );
+  }
+
+  std::expected<HANDLE, SubprocessError> fd_to_handle(int fd) {
+    intptr_t os_handle = _get_osfhandle(fd);
+    if (os_handle == -1) {
+      return std::unexpected{SubprocessError::from_errcode(errno)};
+    }
+    return reinterpret_cast<HANDLE>(os_handle);
   }
 
   /**
@@ -261,32 +228,23 @@ namespace jowi::process {
      * @param restorer Tracks handles to reset inheritance flags on exit.
      * @param inherits Flag toggled when any stream is redirected.
      */
-    static std::expected<void, SubprocessError> configure_stream(
-      const std::optional<int> &fd,
+    static std::expected<bool, SubprocessError> configure_stream(
+      const std::optional<HANDLE> &handle_override,
       HANDLE &target,
-      HandleRestorer &restorer,
-      bool &inherits
+      std::vector<generic::UniqueHandle<HANDLE, HandleInheritToggle>> &restorers
     ) {
-      if (!fd || *fd == -1) {
-        return {};
+      if (!handle_override || *handle_override == INVALID_HANDLE_VALUE) {
+        return false;
       }
-      auto handle = fd_to_handle(*fd);
-      if (!handle) {
-        return std::unexpected{handle.error()};
+      auto toggler = inherit_handle(*handle_override);
+      if (!toggler) {
+        return std::unexpected{toggler.error()};
       }
-      DWORD flags = 0;
-      if (!GetHandleInformation(*handle, &flags)) {
-        return std::unexpected{win32_last_error()};
+      if (toggler->get_or(INVALID_HANDLE_VALUE) != INVALID_HANDLE_VALUE) {
+        restorers.emplace_back(std::move(*toggler));
       }
-      if ((flags & HANDLE_FLAG_INHERIT) == 0) {
-        if (!SetHandleInformation(*handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
-          return std::unexpected{win32_last_error()};
-        }
-        restorer.handles.push_back(*handle);
-      }
-      target = *handle;
-      inherits = true;
-      return {};
+      target = *handle_override;
+      return true;
     }
 
     /**
@@ -299,9 +257,9 @@ namespace jowi::process {
      */
     static std::expected<Subprocess, SubprocessError> spawn(
       const SubprocessArgument &args,
-      std::optional<int> out = std::nullopt,
-      std::optional<int> in = std::nullopt,
-      std::optional<int> err = std::nullopt,
+      std::optional<HANDLE> out = std::nullopt,
+      std::optional<HANDLE> in = std::nullopt,
+      std::optional<HANDLE> err = std::nullopt,
       const SubprocessEnv &env = SubprocessEnv::global_env()
     ) {
       STARTUPINFOA startup_info{};
@@ -309,34 +267,36 @@ namespace jowi::process {
       startup_info.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
       startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
       startup_info.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-      HandleRestorer restorer{};
-      bool inherit_handles = false;
-      if (auto res = configure_stream(out, startup_info.hStdOutput, restorer, inherit_handles);
-          !res) {
-        return std::unexpected{res.error()};
+      std::vector<generic::UniqueHandle<HANDLE, HandleInheritToggle>> handle_restorers;
+      auto configure_and_flag = [&](const std::optional<HANDLE> &handle, HANDLE &target) {
+        return configure_stream(handle, target, handle_restorers)
+          .and_then([&](bool inherits) -> std::expected<void, SubprocessError> {
+            if (inherits) {
+              startup_info.dwFlags |= STARTF_USESTDHANDLES;
+            }
+            return {};
+          });
+      };
+      if (auto res = configure_and_flag(out, startup_info.hStdOutput); !res) {
+        return res;
       }
-      if (auto res = configure_stream(in, startup_info.hStdInput, restorer, inherit_handles); !res) {
-        return std::unexpected{res.error()};
+      if (auto res = configure_and_flag(in, startup_info.hStdInput); !res) {
+        return res;
       }
-      if (auto res = configure_stream(err, startup_info.hStdError, restorer, inherit_handles); !res) {
-        return std::unexpected{res.error()};
-      }
-      if (inherit_handles) {
-        startup_info.dwFlags |= STARTF_USESTDHANDLES;
+      if (auto res = configure_and_flag(err, startup_info.hStdError); !res) {
+        return res;
       }
 
       auto command_line = build_command_line(args);
-      std::vector<char> command_buffer(command_line.begin(), command_line.end());
-      command_buffer.push_back('\0');
       auto env_block = build_environment_block(env);
 
       PROCESS_INFORMATION proc_info{};
       BOOL created = CreateProcessA(
-        args.exec(),
-        command_buffer.data(),
+        nullptr,
+        command_line.c_str(),
         nullptr,
         nullptr,
-        inherit_handles ? TRUE : FALSE,
+        TRUE,
         0,
         env_block.data(),
         nullptr,
@@ -344,7 +304,9 @@ namespace jowi::process {
         &proc_info
       );
       if (!created) {
-        return std::unexpected{win32_last_error()};
+        DWORD err = GetLastError();
+        _dosmaperr(err);
+        return std::unexpected{SubprocessError::from_errcode(errno)};
       }
       CloseHandle(proc_info.hThread);
       return Subprocess{proc_info.hProcess, proc_info.dwProcessId};
@@ -667,5 +629,4 @@ namespace jowi::process {
     );
   }
 #endif
-
 }

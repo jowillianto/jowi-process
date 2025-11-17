@@ -13,16 +13,6 @@ import :subprocess_error;
 import :subprocess_result;
 
 namespace jowi::process {
-  namespace {
-    SubprocessError win32_error_from_code(DWORD err) {
-      _dosmaperr(err);
-      return SubprocessError::from_errcode(errno);
-    }
-
-    SubprocessError win32_last_error() {
-      return win32_error_from_code(GetLastError());
-    }
-  }
 
   using native_pid_t = DWORD;
   using pid_t = native_pid_t;
@@ -36,17 +26,10 @@ namespace jowi::process {
     native_pid_t __pid;
 
     /**
-     * @brief Determine whether this wrapper currently owns a live process handle.
-     */
-    bool __valid() const noexcept {
-      return __process != nullptr && __process != INVALID_HANDLE_VALUE;
-    }
-
-    /**
      * @brief Release the process handle by terminating and closing it.
      */
     void __destroy() noexcept {
-      if (__valid()) {
+      if (__process != INVALID_HANDLE_VALUE) {
         TerminateProcess(__process, 1);
         WaitForSingleObject(__process, 100);
         CloseHandle(__process);
@@ -62,7 +45,9 @@ namespace jowi::process {
     std::expected<SubprocessResult, SubprocessError> __finalise(bool check) noexcept {
       DWORD exit_code = 0;
       if (!GetExitCodeProcess(__process, &exit_code)) {
-        return std::unexpected{win32_last_error()};
+        DWORD err = GetLastError();
+        _dosmaperr(err);
+        return std::unexpected{SubprocessError::from_errcode(errno)};
       }
       CloseHandle(__process);
       __process = INVALID_HANDLE_VALUE;
@@ -117,12 +102,11 @@ namespace jowi::process {
      * @param check When true, non-zero exit codes become errors.
      */
     std::expected<SubprocessResult, SubprocessError> wait(bool check = true) noexcept {
-      if (!__valid()) {
-        return std::unexpected{SubprocessError::from_errcode(ECHILD)};
-      }
       auto rv = WaitForSingleObject(__process, INFINITE);
       if (rv == WAIT_FAILED) {
-        return std::unexpected{win32_last_error()};
+        DWORD err = GetLastError();
+        _dosmaperr(err);
+        return std::unexpected{SubprocessError::from_errcode(errno)};
       }
       return __finalise(check);
     }
@@ -134,15 +118,14 @@ namespace jowi::process {
     std::expected<std::optional<SubprocessResult>, SubprocessError> wait_non_blocking(
       bool check
     ) noexcept {
-      if (!__valid()) {
-        return std::unexpected{SubprocessError::from_errcode(ECHILD)};
-      }
       auto rv = WaitForSingleObject(__process, 0);
       if (rv == WAIT_TIMEOUT) {
         return std::optional<SubprocessResult>{std::nullopt};
       }
       if (rv == WAIT_FAILED) {
-        return std::unexpected{win32_last_error()};
+        DWORD err = GetLastError();
+        _dosmaperr(err);
+        return std::unexpected{SubprocessError::from_errcode(errno)};
       }
       return __finalise(check).transform([](auto &&res) {
         return std::optional<SubprocessResult>{res};
@@ -156,12 +139,11 @@ namespace jowi::process {
     std::expected<std::reference_wrapper<UniquePid>, SubprocessError> send_signal(
       int sig
     ) noexcept {
-      if (!__valid()) {
-        return std::unexpected{SubprocessError::from_errcode(ECHILD)};
-      }
       if (sig == SIGKILL || sig == SIGTERM) {
         if (!TerminateProcess(__process, 1)) {
-          return std::unexpected{win32_last_error()};
+          DWORD err = GetLastError();
+          _dosmaperr(err);
+          return std::unexpected{SubprocessError::from_errcode(errno)};
         }
         return std::ref(*this);
       }

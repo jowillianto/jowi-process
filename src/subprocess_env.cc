@@ -111,6 +111,16 @@ namespace jowi::process {
       return __parsed_env.value().data();
     }
 
+    auto begin() const noexcept {
+      return __env.begin();
+    }
+    auto end() const noexcept {
+      return __env.end();
+    }
+    auto size() const noexcept {
+      return __env.size();
+    }
+
     /**
      * @brief Populate the global environment from the host process environment once.
      * @param cur_env Null-terminated array of environment strings.

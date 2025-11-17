@@ -80,6 +80,9 @@ namespace jowi::process {
     constexpr auto end() const noexcept {
       return __args.end();
     }
+    constexpr auto size() const noexcept {
+      return __args.size();
+    }
   };
 };
 
