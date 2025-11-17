@@ -8,6 +8,7 @@ module;
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <format>
 #include <functional>
 #include <io.h>
 #include <iterator>
@@ -21,14 +22,18 @@ export module jowi.process:subprocess;
 #ifdef JOWI_PROCESS_INTEGRATE_IO
 import jowi.io;
 #endif
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
 import jowi.asio;
+#endif
 import jowi.generic;
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
 export import :subprocess_error;
 export import :unique_pid;
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
 export import :asio;
+#endif
 
 namespace jowi::process {
   std::string build_command_line(const SubprocessArgument &args) {
@@ -157,6 +162,7 @@ namespace jowi::process {
      * @brief Create an awaitable that resolves when the process completes.
      * @param check When true, non-zero exits surface as errors.
      */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
     asio::InfiniteAwaiter<ProcessWaitPoller> async_wait(bool check = true) noexcept {
       return asio::InfiniteAwaiter<ProcessWaitPoller>{__p, check};
     }
@@ -171,6 +177,7 @@ namespace jowi::process {
     ) noexcept {
       return asio::TimedAwaiter<ProcessWaitPoller>{timeout, __p, check};
     }
+#endif
     /**
      * @brief Send a signal to the process and return a reference to this wrapper.
      * @param sig Signal number to deliver.
@@ -240,9 +247,7 @@ namespace jowi::process {
       if (!toggler) {
         return std::unexpected{toggler.error()};
       }
-      if (toggler->get_or(INVALID_HANDLE_VALUE) != INVALID_HANDLE_VALUE) {
-        restorers.emplace_back(std::move(*toggler));
-      }
+      restorers.emplace_back(std::move(*toggler));
       target = *handle_override;
       return true;
     }
@@ -257,9 +262,9 @@ namespace jowi::process {
      */
     static std::expected<Subprocess, SubprocessError> spawn(
       const SubprocessArgument &args,
-      std::optional<HANDLE> out = std::nullopt,
-      std::optional<HANDLE> in = std::nullopt,
-      std::optional<HANDLE> err = std::nullopt,
+      std::optional<int> out = std::nullopt,
+      std::optional<int> in = std::nullopt,
+      std::optional<int> err = std::nullopt,
       const SubprocessEnv &env = SubprocessEnv::global_env()
     ) {
       STARTUPINFOA startup_info{};
@@ -267,6 +272,19 @@ namespace jowi::process {
       startup_info.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
       startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
       startup_info.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+      auto convert_handle = [&](const std::optional<int> &fd
+      ) -> std::expected<std::optional<HANDLE>, SubprocessError> {
+        if (!fd || *fd == -1) {
+          return std::optional<HANDLE>{std::nullopt};
+        }
+        return fd_to_handle(*fd).transform([](HANDLE h) { return std::optional<HANDLE>{h}; });
+      };
+      auto out_handle = convert_handle(out);
+      if (!out_handle) return std::unexpected{out_handle.error()};
+      auto in_handle = convert_handle(in);
+      if (!in_handle) return std::unexpected{in_handle.error()};
+      auto err_handle = convert_handle(err);
+      if (!err_handle) return std::unexpected{err_handle.error()};
       std::vector<generic::UniqueHandle<HANDLE, HandleInheritToggle>> handle_restorers;
       auto configure_and_flag = [&](const std::optional<HANDLE> &handle, HANDLE &target) {
         return configure_stream(handle, target, handle_restorers)
@@ -277,13 +295,13 @@ namespace jowi::process {
             return {};
           });
       };
-      if (auto res = configure_and_flag(out, startup_info.hStdOutput); !res) {
+      if (auto res = configure_and_flag(*out_handle, startup_info.hStdOutput); !res) {
         return res;
       }
-      if (auto res = configure_and_flag(in, startup_info.hStdInput); !res) {
+      if (auto res = configure_and_flag(*in_handle, startup_info.hStdInput); !res) {
         return res;
       }
-      if (auto res = configure_and_flag(err, startup_info.hStdError); !res) {
+      if (auto res = configure_and_flag(*err_handle, startup_info.hStdError); !res) {
         return res;
       }
 
@@ -358,6 +376,7 @@ namespace jowi::process {
       });
     }
 
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
     /**
      * @brief Spawn and await a Subprocess using coroutines.
      * @param args Executable and arguments to launch.
@@ -413,6 +432,7 @@ namespace jowi::process {
       }
       co_return proc->kill_and_wait(check);
     }
+#endif
   };
 
   /**
@@ -482,6 +502,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
@@ -513,6 +534,7 @@ namespace jowi::process {
   ) {
     return Subprocess::async_timed_run(args, check, timeout, out, in, err, env);
   }
+#endif
 
 #ifdef JOWI_PROCESS_INTEGRATE_IO
   /**
@@ -592,6 +614,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
@@ -628,5 +651,6 @@ namespace jowi::process {
       args, check, timeout, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
+#endif
 #endif
 }

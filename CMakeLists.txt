@@ -5,13 +5,14 @@ set (CMAKE_CXX_STANDARD_REQUIRED true)
 set (CMAKE_CXX_SCAN_FOR_MODULES true)
 
 option (JOWI_PROCESS_BUILD_TESTS "Build tests" OFF)
-option (JOWI_PROCESS_INTEGRATE_IO "Enable integration with jowi.io helpers" ON)
+option (JOWI_PROCESS_INTEGRATE_IO "Enable integration with jowi.io helpers" OFF)
+option (JOWI_PROCESS_INTEGRATE_ASIO "Enable integration with jowi.asio helpers" OFF)
 
 if (NOT TARGET jowi::generic)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-generic)
 endif()
 
-if (NOT TARGET jowi::asio)
+if (JOWI_PROCESS_INTEGRATE_ASIO AND NOT TARGET jowi::asio)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/libs/jowi-asio)
 endif()
 
@@ -27,8 +28,12 @@ set(JOWI_PROCESS_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_argument.cc
     ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_env.cc
     ${CMAKE_CURRENT_LIST_DIR}/src/subprocess_error.cc
-    ${CMAKE_CURRENT_LIST_DIR}/src/asio.cc
 )
+if (JOWI_PROCESS_INTEGRATE_ASIO)
+    list(APPEND JOWI_PROCESS_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/src/asio.cc
+    )
+endif()
 
 if (WIN32)
     list(APPEND JOWI_PROCESS_SOURCES
@@ -54,21 +59,26 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 target_link_libraries(${PROJECT_NAME}
   PUBLIC
     jowi::generic
-    jowi::asio
 )
 
 if (JOWI_PROCESS_INTEGRATE_IO)
     target_link_libraries(${PROJECT_NAME} PUBLIC jowi::io)
+    target_compile_definitions(${PROJECT_NAME}
+        PUBLIC
+            JOWI_PROCESS_INTEGRATE_IO=""
+    )
+endif()
+if (JOWI_PROCESS_INTEGRATE_ASIO)
+    target_link_libraries(${PROJECT_NAME} PUBLIC jowi::asio)
+    target_compile_definitions(${PROJECT_NAME}
+        PUBLIC
+            JOWI_PROCESS_INTEGRATE_ASIO=""
+    )
 endif()
 
-target_compile_definitions(${PROJECT_NAME}
-  PUBLIC
-    JOWI_PROCESS_INTEGRATE_IO=$<BOOL:${JOWI_PROCESS_INTEGRATE_IO}>
-)
-
 if (JOWI_PROCESS_BUILD_TESTS)
-    if (NOT JOWI_PROCESS_INTEGRATE_IO)
-        message(WARNING "Tests require JOWI_PROCESS_INTEGRATE_IO=ON; skipping test build.")
+    if (NOT JOWI_PROCESS_INTEGRATE_IO OR NOT JOWI_PROCESS_INTEGRATE_ASIO)
+        message(WARNING "Tests require IO and ASIO integrations enabled; skipping test build.")
     else()
         include(CTest)
         if (NOT TARGET jowi::test_lib)

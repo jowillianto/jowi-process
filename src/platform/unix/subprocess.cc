@@ -15,13 +15,17 @@ export module jowi.process:subprocess;
 #ifdef JOWI_PROCESS_INTEGRATE_IO
 import jowi.io;
 #endif
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
 import jowi.asio;
+#endif
 export import :subprocess_result;
 export import :subprocess_argument;
 export import :subprocess_env;
 export import :subprocess_error;
 export import :unique_pid;
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
 export import :asio;
+#endif
 
 namespace jowi::process {
   struct SubprocessSpawnActionDuper {
@@ -103,6 +107,7 @@ namespace jowi::process {
       return __p.wait(check);
     }
 
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
     /**
      * @brief Create an awaitable that resolves when the process completes.
      * @param check When true, non-zero exits surface as errors.
@@ -121,6 +126,7 @@ namespace jowi::process {
     ) noexcept {
       return asio::TimedAwaiter<ProcessWaitPoller>{timeout, __p, check};
     }
+#endif
     /**
      * @brief Send a signal to the process and return a reference to this wrapper.
      * @param sig Signal number to deliver.
@@ -263,6 +269,7 @@ namespace jowi::process {
      * @param err Optional file descriptor duplicated to the child stderr stream.
      * @param e Environment definition to expose to the child process.
      */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
     static asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
       const SubprocessArgument &args,
       bool check = true,
@@ -309,6 +316,7 @@ namespace jowi::process {
       }
       co_return proc->kill_and_wait(check);
     }
+#endif
   };
 
   /**
@@ -378,6 +386,7 @@ namespace jowi::process {
    * @param err Optional file descriptor duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
@@ -409,6 +418,7 @@ namespace jowi::process {
   ) {
     return Subprocess::async_timed_run(args, check, timeout, out, in, err, env);
   }
+#endif
 #ifdef JOWI_PROCESS_INTEGRATE_IO
   /**
    * @brief Spawn a Subprocess using file wrapper handles for standard streams.
@@ -487,6 +497,7 @@ namespace jowi::process {
    * @param err Optional file wrapper duplicated to the child stderr stream.
    * @param env Environment definition to expose to the child process.
    */
+#ifdef JOWI_PROCESS_INTEGRATE_ASIO
   export asio::BasicTask<std::expected<SubprocessResult, SubprocessError>> async_run(
     const SubprocessArgument &args,
     bool check = true,
@@ -523,6 +534,7 @@ namespace jowi::process {
       args, check, timeout, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
+#endif
 #endif
 
 }
