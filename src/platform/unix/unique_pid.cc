@@ -71,7 +71,7 @@ namespace jowi::process {
      */
     void __destroy() {
       if (__pid != -1) {
-        auto kill_res = send_signal(__pid);
+        auto kill_res = send_signal(SIGKILL);
         auto wait_res = wait();
       }
     }
