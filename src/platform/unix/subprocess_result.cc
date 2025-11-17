@@ -14,7 +14,7 @@ namespace jowi::process {
      * @brief Construct the result wrapper from a POSIX wait status value.
      * @param status Raw status supplied by `waitpid` or similar calls.
      */
-    SubprocessResult(int status) : _status{status} {}
+    explicit SubprocessResult(int status) : _status{status} {}
     /**
      * @brief Check whether the process exited normally via `exit` or `return`.
      */

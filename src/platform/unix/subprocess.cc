@@ -12,7 +12,9 @@ module;
 #include <thread>
 #include <unistd.h>
 export module jowi.process:subprocess;
+#ifdef JOWI_PROCESS_INTEGRATE_IO
 import jowi.io;
+#endif
 import jowi.asio;
 export import :subprocess_result;
 export import :subprocess_argument;
@@ -407,6 +409,7 @@ namespace jowi::process {
   ) {
     return Subprocess::async_timed_run(args, check, timeout, out, in, err, env);
   }
+#ifdef JOWI_PROCESS_INTEGRATE_IO
   /**
    * @brief Spawn a Subprocess using file wrapper handles for standard streams.
    * @param args Executable and arguments to launch.
@@ -520,5 +523,6 @@ namespace jowi::process {
       args, check, timeout, out.native_handle(), in.native_handle(), err.native_handle(), env
     );
   }
+#endif
 
 }
