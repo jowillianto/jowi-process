@@ -87,11 +87,11 @@ if (JOWI_PROCESS_BUILD_TESTS)
         add_executable(process_child ${CMAKE_CURRENT_LIST_DIR}/tests/test_child.cpp)
         target_link_libraries(process_child PRIVATE jowi::process)
         jowi_add_test(test_jowi_process_basic
-        ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
-        LIBRARIES ${PROJECT_NAME} jowi::io
-        COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
-        SANITIZERS all
-    )
+            ${CMAKE_CURRENT_LIST_DIR}/tests/tests.cpp
+            LIBRARIES ${PROJECT_NAME} jowi::io
+            COMPILE_DEFINITIONS TEST_CHILD_EXEC="${CMAKE_CURRENT_BINARY_DIR}/process_child"
+            SANITIZERS all
+        )
     endif()
 endif()
 
